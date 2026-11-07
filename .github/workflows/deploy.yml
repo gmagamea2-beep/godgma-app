@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # 데이터 저장소(godgma-data)에 커밋하면 그쪽 워크플로가 이 이벤트를 보낸다
+  repository_dispatch:
+    types: [data-updated]
 
 permissions:
   contents: read
@@ -17,6 +20,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_DATA_TOKEN: ${{ secrets.DATA_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,6 +29,25 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # 사이트 배포본(share.json / full.enc.json)을 비공개 데이터 저장소의 최신 내용으로 다시 만든다.
+      # 필요한 Secrets: DATA_TOKEN(godgma-data 읽기 전용 토큰), SHARE_CODE(실명 보기 코드)
+      # DATA_TOKEN 이 없으면 저장소에 들어 있는 배포본을 그대로 쓴다.
+      - name: Fetch data repo
+        if: ${{ env.HAS_DATA_TOKEN == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: gmagamea2-beep/godgma-data
+          ref: main
+          token: ${{ secrets.DATA_TOKEN }}
+          path: _data
+          persist-credentials: false
+      - name: Build site bundles
+        if: ${{ hashFiles('_data/index.json') != '' }}
+        env:
+          SHARE_CODE: ${{ secrets.SHARE_CODE }}
+        run: |
+          node tools/build_bundles.mjs _data
+          rm -rf _data
       - run: npm run build
       # 실명이 빌드 결과물에 섞이면 배포를 멈춘다 (가릴 이름은 비공개 데이터 저장소에만 있어야 한다)
       - name: Check no data in dist

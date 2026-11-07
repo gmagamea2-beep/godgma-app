@@ -43,3 +43,12 @@ src/style.css       다크/라이트 테마, 인쇄용 CSS
 
 `npm run dev` 후 더보기 → 저장소 연결 → 데이터 출처를 "로컬 godgma-data 폴더"로 바꾼다.
 기본 경로는 `../../godgma-data`, 다른 곳이면 환경 변수 `GODGMA_DATA_DIR`. 빌드 결과물에는 이 기능이 없다.
+
+## 사이트 배포본 자동 갱신
+
+- `public/share.json`(공개본, 이름 가림·파일 이름 f0.md…)과 `public/full.enc.json`(실명본, 실명 보기 코드로 AES-GCM 암호화)은
+  `tools/build_bundles.mjs <godgma-data 폴더>` 로 만든다. 실명본은 환경 변수 `SHARE_CODE` 가 있을 때만 만든다.
+- 배포 워크플로가 Secrets `DATA_TOKEN`(godgma-data 읽기 전용) · `SHARE_CODE` 로 매 배포마다 두 파일을 다시 만든다.
+- godgma-data 에 커밋하면 그쪽 `notify-app.yml` 이 `repository_dispatch(data-updated)` 를 보내 이 저장소의 배포가 돈다.
+  (godgma-data 쪽 Secret: `APP_DISPATCH_TOKEN`, godgma-app 에 Contents 읽기·쓰기)
+
