@@ -124,10 +124,51 @@ function referencedFiles(indexText) {
   return paths;
 }
 
+// ---------- 공유본: 사이트에 올린 암호화 파일(share.enc.json)을 공유 코드로 연다 ----------
+
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+export async function decryptBundle(bundle, code) {
+  if (bundle?.v !== 1 || bundle.kdf !== 'PBKDF2-SHA256') throw new SyncError('공유본 형식을 알 수 없습니다.');
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: b64(bundle.salt), iterations: bundle.iterations },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt'],
+  );
+  let plain;
+  try {
+    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(bundle.iv) }, key, b64(bundle.data));
+  } catch {
+    throw new SyncError('공유 코드가 맞지 않습니다.', { status: 401 });
+  }
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+async function syncShared(settings, prev, now) {
+  const res = await request(new URL('share.enc.json', document.baseURI).href);
+  if (!res.ok) throw new SyncError('공유본이 아직 올라와 있지 않습니다.', { status: res.status });
+  const bundle = await res.json();
+  if (prev && prev.commitSha === bundle.id) return { snapshot: { ...prev, checkedAt: now }, changed: false };
+  const { files: texts } = await decryptBundle(bundle, settings.shareCode);
+  const files = {};
+  for (const [path, text] of Object.entries(texts)) files[path] = { sha: '', text };
+  return {
+    snapshot: { sourceKey: 'shared', commitSha: bundle.id, syncedAt: now, checkedAt: now, files, missing: [] },
+    changed: true,
+  };
+}
+
 /**
  * @returns {Promise<{snapshot: object, changed: boolean}>}
  */
 export async function sync(settings, previous) {
+  if (settings.source === 'shared') {
+    const prev = previous?.sourceKey === 'shared' ? previous : null;
+    return syncShared(settings, prev, Date.now());
+  }
   if (settings.source === 'github' && !settings.token) {
     throw new SyncError('GitHub 토큰이 없습니다. 더보기 → 저장소 연결에서 토큰을 넣어 주세요.');
   }

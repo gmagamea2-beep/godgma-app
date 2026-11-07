@@ -7,6 +7,8 @@ import { buildSearchIndex, collectTodos, search } from './search.js';
 import { DEFAULTS, FONT_SCALES, loadSettings, saveSettings, sourceKey } from './settings.js';
 import { SyncError, sync } from './sync.js';
 
+const isShared = () => state.settings.source === 'shared';
+
 const AUTO_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TOAST_MS = 3200;
 const SEARCH_DEBOUNCE_MS = 120;
@@ -131,9 +133,9 @@ function topBar() {
       <div class="brand-status" id="status">${esc(statusText())}</div>
     </div>
     <a class="icon-btn" href="#/search" aria-label="검색">${icon('search')}</a>
-    <button class="icon-btn ${shareOn ? 'on' : ''}" id="share-toggle" aria-pressed="${shareOn}" aria-label="공유 모드">
+    ${isShared() ? '' : `<button class="icon-btn ${shareOn ? 'on' : ''}" id="share-toggle" aria-pressed="${shareOn}" aria-label="공유 모드">
       ${icon('eyeOff')}<span class="icon-label">공유</span>
-    </button>
+    </button>`}
     <button class="icon-btn ${state.syncing ? 'spin' : ''}" id="sync-btn" aria-label="지금 동기화">${icon('sync')}</button>
   </header>
   ${shareOn ? `<div class="share-banner">공유 모드 · 실명을 가린 화면입니다${m.shareLeftovers.length ? ` · <b>가려지지 않은 이름 ${m.shareLeftovers.length}종이 있습니다. share_rules.json 을 확인하세요.</b>` : ''}</div>` : ''}
@@ -188,9 +190,16 @@ function pageArticle(page) {
 }
 
 function onboarding() {
-  return `<section class="card onboarding">
-    <h2>데이터를 아직 받지 않았습니다</h2>
+  return `<section class="card">
+    <h2>공유 코드로 보기</h2>
+    <form id="code-form" class="row" autocomplete="off">
+      <input class="code-input" name="code" type="password" placeholder="공유 코드" aria-label="공유 코드" required>
+      <button class="btn primary" type="submit">열기</button>
+    </form>
     ${state.lastError ? `<p class="error">${esc(state.lastError)}</p>` : ''}
+  </section>
+  <section class="card onboarding">
+    <h2>작가용: 원본 저장소 연결</h2>
     <ol>
       <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token</li>
       <li>Repository access: <b>Only select repositories</b> → <code>${esc(state.settings.repo)}</code> 하나만</li>
@@ -299,7 +308,7 @@ function moreView() {
       <dt>마지막 갱신</dt><dd>${esc(formatTime(snap?.syncedAt))}</dd>
       <dt>마지막 확인</dt><dd>${esc(formatTime(snap?.checkedAt))}</dd>
       <dt>커밋</dt><dd><code>${esc(snap?.commitSha?.slice(0, 7) || '-')}</code></dd>
-      <dt>저장소</dt><dd><code>${esc(s.source === 'local' ? '로컬 폴더 (개발)' : `${s.owner}/${s.repo}@${s.branch}`)}</code></dd>
+      <dt>출처</dt><dd><code>${esc(s.source === 'shared' ? '공유본 (공유 코드)' : s.source === 'local' ? '로컬 폴더 (개발)' : `${s.owner}/${s.repo}@${s.branch}`)}</code></dd>
     </dl>
     ${state.lastError ? `<p class="error">${esc(state.lastError)}</p>` : ''}
     ${snap?.missing?.length ? `<p class="error">index.json 에 있지만 저장소에 없는 파일: ${snap.missing.map(esc).join(', ')}</p>` : ''}
@@ -325,7 +334,11 @@ function moreView() {
     <p class="hint">인쇄도 공유 모드 설정을 따릅니다. 다른 사람에게 보낼 PDF는 공유 모드를 켜고 만드세요.</p>
   </section>
 
-  <section class="card">
+  ${isShared() ? `<section class="card">
+    <h2>공유본 보는 중</h2>
+    <p class="hint">공유 코드로 연 공유본입니다. 작가가 공유본을 새로 올리면 앱을 열 때 자동으로 바뀝니다.</p>
+    <button class="btn" id="leave-shared">공유본 닫기</button>
+  </section>` : `<section class="card">
     <h2>저장소 연결</h2>
     <form id="repo-form" autocomplete="off">
       ${
@@ -346,7 +359,7 @@ function moreView() {
       </div>
     </form>
     <p class="hint">토큰은 이 기기 브라우저에만 저장됩니다. <b>Contents: Read-only</b> 권한으로 이 저장소 하나만 허용한 fine-grained 토큰을 쓰세요.</p>
-  </section>
+  </section>`}
 
   <section class="card">
     <h2>기기 데이터</h2>
@@ -427,6 +440,8 @@ function refreshStatus() {
 let searchTimer = 0;
 
 function bindView(route) {
+  document.getElementById('code-form')?.addEventListener('submit', openWithCode);
+  document.getElementById('leave-shared')?.addEventListener('click', leaveShared);
   document.getElementById('share-toggle')?.addEventListener('click', toggleShare);
   document.getElementById('sync-btn')?.addEventListener('click', () => doSync({ manual: true }));
 
@@ -458,6 +473,48 @@ function bindView(route) {
     document.getElementById('clear-cache')?.addEventListener('click', clearCache);
     document.getElementById('repo-form')?.addEventListener('submit', saveRepoForm);
   }
+}
+
+async function openWithCode(e) {
+  e.preventDefault();
+  const code = String(new FormData(e.target).get('code') || '').trim();
+  if (!code) return;
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  btn.textContent = '여는 중…';
+  // 코드가 맞는지 먼저 확인하고, 맞을 때만 이 기기에 저장한다.
+  try {
+    const trial = { ...state.settings, source: 'shared', shareCode: code };
+    const { snapshot } = await sync(trial, null);
+    updateSettings({ source: 'shared', shareCode: code, shareMode: false });
+    state.snapshot = snapshot;
+    state.lastError = '';
+    try {
+      await saveSnapshot(snapshot);
+    } catch (err) {
+      console.warn('[share] 기기에 저장하지 못했다', err);
+    }
+    rebuild();
+    location.hash = '#/';
+    render();
+  } catch (err) {
+    state.lastError = err instanceof SyncError ? err.message : `열지 못했습니다: ${err.message}`;
+    if (!(err instanceof SyncError)) console.error('[share] 공유본 열기 실패', err);
+    render({ keepScroll: true });
+  }
+}
+
+async function leaveShared() {
+  updateSettings({ source: 'github', shareCode: '' });
+  try {
+    await clearSnapshot();
+  } catch (err) {
+    console.warn('[cache] 지우지 못했다', err);
+  }
+  state.snapshot = null;
+  state.lastError = '';
+  rebuild();
+  render();
 }
 
 function toggleShare() {
@@ -574,9 +631,14 @@ async function doSync({ manual = false } = {}) {
   }
 }
 
+function canSync() {
+  const s = state.settings;
+  return s.source === 'local' || (s.source === 'shared' && Boolean(s.shareCode)) || (s.source === 'github' && Boolean(s.token));
+}
+
 function maybeAutoSync() {
   if (!navigator.onLine) return;
-  if (state.settings.source === 'github' && !state.settings.token) return;
+  if (!canSync()) return;
   const last = state.snapshot?.checkedAt || 0;
   if (Date.now() - last >= AUTO_CHECK_INTERVAL_MS || state.snapshot?.sourceKey !== sourceKey(state.settings)) {
     doSync();
@@ -595,7 +657,7 @@ async function start() {
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && maybeAutoSync());
   window.addEventListener('online', maybeAutoSync);
   // 앱을 열 때는 최신 커밋을 항상 확인한다 (바뀌지 않았으면 sha 하나만 받는다).
-  if (navigator.onLine && (state.settings.source === 'local' || state.settings.token)) doSync();
+  if (navigator.onLine && canSync()) doSync();
 
   if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     import('virtual:pwa-register')

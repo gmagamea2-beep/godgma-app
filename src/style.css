@@ -259,3 +259,9 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
   .md h2, .md h3 { break-after: avoid; }
   .md tr, .md blockquote { break-inside: avoid; }
 }
+
+.code-input {
+  flex: 1; min-width: 0; height: 44px; padding: 0 12px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  font: inherit; font-size: 1rem;
+}

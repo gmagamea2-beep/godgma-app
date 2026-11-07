@@ -6,7 +6,8 @@ export const DEFAULTS = Object.freeze({
   repo: 'godgma-data',
   branch: 'main',
   token: '',
-  source: 'github', // 'github' | 'local'(개발 서버 전용)
+  source: 'github', // 'github' | 'shared'(공유 코드로 여는 공유본) | 'local'(개발 서버 전용)
+  shareCode: '',
   theme: 'dark', // 'dark' | 'light' | 'system'
   fontScale: 1, // 1 | 1.125 | 1.25
   shareMode: false,
@@ -44,5 +45,6 @@ export function saveSettings(settings) {
 
 /** 캐시가 어느 저장소의 것인지 구분하는 키. 저장소를 바꾸면 캐시를 새로 받는다. */
 export function sourceKey(s) {
+  if (s.source === 'shared') return 'shared';
   return s.source === 'local' ? 'local' : `github:${s.owner}/${s.repo}@${s.branch}`;
 }
