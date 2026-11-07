@@ -15,7 +15,7 @@
   --mark: #5b4a9e;
   --warn-bg: #3a1f26;
   --topbar-h: 56px;
-  --chips-h: 48px;
+  --chips-h: 104px;
   --nav-h: 62px;
   color-scheme: dark;
 }
@@ -87,10 +87,11 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 /* ---------- 하위 탭 칩 ---------- */
 .chips {
   position: sticky; top: calc(var(--topbar-h) + env(safe-area-inset-top)); z-index: 18;
-  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  /* 하위 탭이 많아서 여러 줄로 펼치고, 두 줄 반 높이 안에서 세로로 스크롤한다. */
+  display: flex; flex-wrap: wrap; gap: 6px;
+  max-height: var(--chips-h); overflow-y: auto; overscroll-behavior: contain;
   padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line);
 }
-.chips::-webkit-scrollbar { display: none; }
 .chip {
   flex: none; padding: 5px 13px; border-radius: 999px;
   background: var(--card); border: 1px solid var(--line);

@@ -7,7 +7,7 @@ import { buildSearchIndex, collectTodos, search } from './search.js';
 import { DEFAULTS, FONT_SCALES, loadSettings, saveSettings, sourceKey } from './settings.js';
 import { SyncError, sync } from './sync.js';
 
-const isShared = () => state.settings.source === 'shared';
+const isSite = () => state.settings.source === 'public' || state.settings.source === 'full';
 
 const AUTO_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TOAST_MS = 3200;
@@ -28,6 +28,7 @@ const state = {
   syncing: false,
   lastError: '',
   searchQuery: '',
+  codeError: '',
 };
 
 // ---------- 공통 유틸 ----------
@@ -67,6 +68,8 @@ const ICONS = {
   sync: '<path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/>',
   eyeOff: '<path d="M3 3l18 18M10.6 6.2A9.8 9.8 0 0 1 12 6c5 0 8.5 4.2 9.5 6a14 14 0 0 1-3 3.6M6.5 7.6A14 14 0 0 0 2.5 12c1 1.8 4.5 6 9.5 6 1.5 0 2.9-.4 4.1-1M9.9 10a3 3 0 0 0 4.1 4.1"/>',
   page: '<path d="M7 3h7l5 5v13H7zM14 3v5h5"/>',
+  lock: '<path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 7 0V11"/>',
+  unlock: '<path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 6.8-1.2"/>',
 };
 const icon = (name) =>
   `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.page}</svg>`;
@@ -102,7 +105,7 @@ function updateSettings(patch) {
 function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   const [kind] = parts;
-  if (kind === 'todo' || kind === 'search' || kind === 'more') return { kind };
+  if (kind === 'todo' || kind === 'search' || kind === 'more' || kind === 'unlock') return { kind };
   const tabs = state.model.tabs;
   const tab = (kind === 't' && tabs.find((t) => t.id === parts[1])) || tabs[0];
   if (!tab) return { kind: 'empty' };
@@ -133,7 +136,8 @@ function topBar() {
       <div class="brand-status" id="status">${esc(statusText())}</div>
     </div>
     <a class="icon-btn" href="#/search" aria-label="검색">${icon('search')}</a>
-    ${isShared() ? '' : `<button class="icon-btn ${shareOn ? 'on' : ''}" id="share-toggle" aria-pressed="${shareOn}" aria-label="공유 모드">
+    ${isSite() ? `<a class="icon-btn ${state.settings.source === 'full' ? 'on' : ''}" href="#/unlock" aria-label="실명 보기">${icon(state.settings.source === 'full' ? 'unlock' : 'lock')}</a>` : ''}
+    ${state.settings.source === 'public' ? '' : `<button class="icon-btn ${shareOn ? 'on' : ''}" id="share-toggle" aria-pressed="${shareOn}" aria-label="공유 모드">
       ${icon('eyeOff')}<span class="icon-label">공유</span>
     </button>`}
     <button class="icon-btn ${state.syncing ? 'spin' : ''}" id="sync-btn" aria-label="지금 동기화">${icon('sync')}</button>
@@ -190,15 +194,13 @@ function pageArticle(page) {
 }
 
 function onboarding() {
-  return `<section class="card">
-    <h2>공유 코드로 보기</h2>
-    <form id="code-form" class="row" autocomplete="off">
-      <input class="code-input" name="code" type="password" placeholder="공유 코드" aria-label="공유 코드" required>
-      <button class="btn primary" type="submit">열기</button>
-    </form>
-    ${state.lastError ? `<p class="error">${esc(state.lastError)}</p>` : ''}
-  </section>
-  <section class="card onboarding">
+  if (isSite()) {
+    return `<section class="card">
+      <h2>${state.lastError ? '설정집을 불러오지 못했습니다' : '설정집을 불러오는 중…'}</h2>
+      ${state.lastError ? `<p class="error">${esc(state.lastError)}</p><button class="btn primary" id="sync-now">다시 시도</button>` : ''}
+    </section>`;
+  }
+  return `<section class="card onboarding">
     <h2>작가용: 원본 저장소 연결</h2>
     <ol>
       <li>GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token</li>
@@ -207,6 +209,28 @@ function onboarding() {
       <li>만든 토큰을 <a href="#/more">더보기 → 저장소 연결</a>에 붙여 넣고 저장</li>
     </ol>
     <p class="hint">토큰은 이 기기에만 저장되고, 저장소 읽기만 할 수 있습니다.</p>
+    <button class="btn" id="use-site">토큰 없이 사이트 공개본 보기</button>
+  </section>`;
+}
+
+function unlockView() {
+  if (state.settings.source === 'full') {
+    return `<h1 class="view-title">실명 보기</h1>
+    <section class="card">
+      <h2>실명 보기가 켜져 있습니다</h2>
+      <p class="hint">이 기기는 코드를 기억합니다. 다른 사람에게 폰을 보여 줄 때는 다시 가리세요.</p>
+      <button class="btn primary" id="lock-again">다시 가리기</button>
+    </section>`;
+  }
+  return `<h1 class="view-title">실명 보기</h1>
+  <section class="card">
+    <h2>코드를 입력하세요</h2>
+    <p class="hint">코드를 넣으면 가려진 이름(███)이 보입니다.</p>
+    <form id="code-form" class="row" autocomplete="off">
+      <input class="code-input" name="code" type="password" placeholder="코드" aria-label="코드" required>
+      <button class="btn primary" type="submit">열기</button>
+    </form>
+    ${state.codeError ? `<p class="error">${esc(state.codeError)}</p>` : ''}
   </section>`;
 }
 
@@ -308,7 +332,7 @@ function moreView() {
       <dt>마지막 갱신</dt><dd>${esc(formatTime(snap?.syncedAt))}</dd>
       <dt>마지막 확인</dt><dd>${esc(formatTime(snap?.checkedAt))}</dd>
       <dt>커밋</dt><dd><code>${esc(snap?.commitSha?.slice(0, 7) || '-')}</code></dd>
-      <dt>출처</dt><dd><code>${esc(s.source === 'shared' ? '공유본 (공유 코드)' : s.source === 'local' ? '로컬 폴더 (개발)' : `${s.owner}/${s.repo}@${s.branch}`)}</code></dd>
+      <dt>출처</dt><dd><code>${esc(s.source === 'public' ? '사이트 공개본 (두 이름 가림)' : s.source === 'full' ? '사이트 실명본 (코드)' : s.source === 'local' ? '로컬 폴더 (개발)' : `${s.owner}/${s.repo}@${s.branch}`)}</code></dd>
     </dl>
     ${state.lastError ? `<p class="error">${esc(state.lastError)}</p>` : ''}
     ${snap?.missing?.length ? `<p class="error">index.json 에 있지만 저장소에 없는 파일: ${snap.missing.map(esc).join(', ')}</p>` : ''}
@@ -334,10 +358,10 @@ function moreView() {
     <p class="hint">인쇄도 공유 모드 설정을 따릅니다. 다른 사람에게 보낼 PDF는 공유 모드를 켜고 만드세요.</p>
   </section>
 
-  ${isShared() ? `<section class="card">
-    <h2>공유본 보는 중</h2>
-    <p class="hint">공유 코드로 연 공유본입니다. 작가가 공유본을 새로 올리면 앱을 열 때 자동으로 바뀝니다.</p>
-    <button class="btn" id="leave-shared">공유본 닫기</button>
+  ${isSite() ? `<section class="card">
+    <h2>작가용</h2>
+    <p class="hint">사이트에 올린 설정집을 보고 있습니다. 원본 저장소를 바로 보려면 읽기 전용 토큰으로 연결하세요.</p>
+    <button class="btn" id="use-github">원본 저장소 연결</button>
   </section>` : `<section class="card">
     <h2>저장소 연결</h2>
     <form id="repo-form" autocomplete="off">
@@ -356,6 +380,7 @@ function moreView() {
       <div class="row">
         <button class="btn primary" type="submit">저장하고 동기화</button>
         <button class="btn" type="button" id="clear-token" ${s.token ? '' : 'disabled'}>토큰 지우기</button>
+        <button class="btn" type="button" id="use-site">사이트 공개본으로</button>
       </div>
     </form>
     <p class="hint">토큰은 이 기기 브라우저에만 저장됩니다. <b>Contents: Read-only</b> 권한으로 이 저장소 하나만 허용한 fine-grained 토큰을 쓰세요.</p>
@@ -385,6 +410,9 @@ function render({ keepScroll = false } = {}) {
     case 'more':
       main = moreView();
       break;
+    case 'unlock':
+      main = unlockView();
+      break;
     case 'tab':
       main = tabView(route);
       break;
@@ -410,8 +438,10 @@ function render({ keepScroll = false } = {}) {
 }
 
 function scrollToRoute(route) {
-  const active = document.querySelector('.chip.active');
-  active?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  // 칩 목록은 세로로 스크롤되므로 페이지 전체가 아니라 칩 상자 안에서만 활성 칩이 보이게 한다.
+  const box = document.getElementById('chips');
+  const active = box?.querySelector('.chip.active');
+  if (box && active) box.scrollTop = active.offsetTop - box.offsetTop - 8;
   if (route.kind !== 'tab') {
     window.scrollTo(0, 0);
     return;
@@ -441,7 +471,10 @@ let searchTimer = 0;
 
 function bindView(route) {
   document.getElementById('code-form')?.addEventListener('submit', openWithCode);
-  document.getElementById('leave-shared')?.addEventListener('click', leaveShared);
+  document.getElementById('lock-again')?.addEventListener('click', () => switchSource({ source: 'public', shareCode: '' }));
+  document.getElementById('use-site')?.addEventListener('click', () => switchSource({ source: 'public', shareCode: '' }));
+  document.getElementById('use-github')?.addEventListener('click', () => switchSource({ source: 'github', shareCode: '' }, '#/more'));
+  if (route.kind !== 'more') document.getElementById('sync-now')?.addEventListener('click', () => doSync({ manual: true }));
   document.getElementById('share-toggle')?.addEventListener('click', toggleShare);
   document.getElementById('sync-btn')?.addEventListener('click', () => doSync({ manual: true }));
 
@@ -484,9 +517,10 @@ async function openWithCode(e) {
   btn.textContent = '여는 중…';
   // 코드가 맞는지 먼저 확인하고, 맞을 때만 이 기기에 저장한다.
   try {
-    const trial = { ...state.settings, source: 'shared', shareCode: code };
+    const trial = { ...state.settings, source: 'full', shareCode: code };
     const { snapshot } = await sync(trial, null);
-    updateSettings({ source: 'shared', shareCode: code, shareMode: false });
+    updateSettings({ source: 'full', shareCode: code, shareMode: false });
+    state.codeError = '';
     state.snapshot = snapshot;
     state.lastError = '';
     try {
@@ -498,14 +532,15 @@ async function openWithCode(e) {
     location.hash = '#/';
     render();
   } catch (err) {
-    state.lastError = err instanceof SyncError ? err.message : `열지 못했습니다: ${err.message}`;
-    if (!(err instanceof SyncError)) console.error('[share] 공유본 열기 실패', err);
+    state.codeError = err instanceof SyncError ? err.message : `열지 못했습니다: ${err.message}`;
+    if (!(err instanceof SyncError)) console.error('[unlock] 실명본 열기 실패', err);
     render({ keepScroll: true });
   }
 }
 
-async function leaveShared() {
-  updateSettings({ source: 'github', shareCode: '' });
+/** 데이터 출처를 바꾼다. 이전 출처의 사본(특히 실명본)은 기기에서 지운다. */
+async function switchSource(patch, hash = '#/') {
+  updateSettings(patch);
   try {
     await clearSnapshot();
   } catch (err) {
@@ -514,7 +549,9 @@ async function leaveShared() {
   state.snapshot = null;
   state.lastError = '';
   rebuild();
-  render();
+  if (location.hash === hash) render();
+  else location.hash = hash;
+  if (canSync()) doSync();
 }
 
 function toggleShare() {
@@ -633,7 +670,9 @@ async function doSync({ manual = false } = {}) {
 
 function canSync() {
   const s = state.settings;
-  return s.source === 'local' || (s.source === 'shared' && Boolean(s.shareCode)) || (s.source === 'github' && Boolean(s.token));
+  return (
+    s.source === 'local' || s.source === 'public' || (s.source === 'full' && Boolean(s.shareCode)) || (s.source === 'github' && Boolean(s.token))
+  );
 }
 
 function maybeAutoSync() {

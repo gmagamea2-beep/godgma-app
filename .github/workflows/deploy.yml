@@ -28,7 +28,7 @@ jobs:
       # 실명이 빌드 결과물에 섞이면 배포를 멈춘다 (가릴 이름은 비공개 데이터 저장소에만 있어야 한다)
       - name: Check no data in dist
         run: |
-          if grep -rIlE --exclude=share.enc.json 'jiwoo|yeseo|__local-data' dist; then echo "dist 에 들어가면 안 되는 문자열이 있다"; exit 1; fi
+          if grep -rIlE --exclude=full.enc.json 'jiwoo|yeseo|__local-data' dist; then echo "dist 에 들어가면 안 되는 문자열이 있다"; exit 1; fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
