@@ -12,6 +12,7 @@ export const DEFAULTS = Object.freeze({
   theme: 'dark', // 'dark' | 'light' | 'system'
   fontScale: 1, // 1 | 1.125 | 1.25
   shareMode: false,
+  railOpen: true, // 왼쪽 세로 탭(목차) 펼침
 });
 
 export const FONT_SCALES = [

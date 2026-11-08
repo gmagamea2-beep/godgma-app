@@ -69,6 +69,10 @@ const ICONS = {
   eyeOff: '<path d="M3 3l18 18M10.6 6.2A9.8 9.8 0 0 1 12 6c5 0 8.5 4.2 9.5 6a14 14 0 0 1-3 3.6M6.5 7.6A14 14 0 0 0 2.5 12c1 1.8 4.5 6 9.5 6 1.5 0 2.9-.4 4.1-1M9.9 10a3 3 0 0 0 4.1 4.1"/>',
   page: '<path d="M7 3h7l5 5v13H7zM14 3v5h5"/>',
   lock: '<path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 7 0V11"/>',
+  rail: '<path d="M4 5h16v14H4zM9 5v14"/>',
+  up: '<path d="M12 19V5m-6 6 6-6 6 6"/>',
+  prev: '<path d="M15 6l-6 6 6 6"/>',
+  next: '<path d="M9 6l6 6-6 6"/>',
   unlock: '<path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 6.8-1.2"/>',
 };
 const icon = (name) =>
@@ -131,6 +135,7 @@ function topBar() {
   const shareOn = m.shareActive;
   return `
   <header class="topbar">
+    ${railAvailable() ? `<button class="icon-btn rail-toggle ${state.settings.railOpen ? 'on-soft' : ''}" id="rail-toggle" aria-pressed="${state.settings.railOpen}" aria-label="목차 열고 닫기">${icon('rail')}</button>` : ''}
     <div class="brand">
       <div class="brand-title">${esc(m.title)}</div>
       <div class="brand-status" id="status">${esc(statusText())}</div>
@@ -147,14 +152,7 @@ function topBar() {
 }
 
 function bottomNav(route) {
-  const items = state.model.tabs.map((t) => ({
-    href: tabHref(t.id, 0),
-    label: t.title,
-    icon: ICONS[t.id] ? t.id : 'page',
-    active: route.kind === 'tab' && route.tab === t,
-  }));
-  items.push({ href: '#/todo', label: '정할 것', icon: 'todo', active: route.kind === 'todo', badge: state.todos.length });
-  items.push({ href: '#/more', label: '더보기', icon: 'more', active: route.kind === 'more' });
+  const items = mainNavItems(route);
   return `<nav class="bottomnav">${items
     .map(
       (i) => `<a href="${i.href}" class="${i.active ? 'active' : ''}" ${i.active ? 'aria-current="page"' : ''}>
@@ -163,14 +161,83 @@ function bottomNav(route) {
     .join('')}</nav>`;
 }
 
-function chips(route) {
-  const { tab, pageNo } = route;
-  if (tab.pages.length <= 1) return '';
-  return `<div class="chips" id="chips">${tab.pages
+// ---------- 왼쪽 세로 탭 (목차) ----------
+
+const currentRoute = { value: null };
+function railAvailable() {
+  const r = currentRoute.value;
+  return Boolean(r && r.kind === 'tab' && state.snapshot && r.tab.pages.length);
+}
+
+/** 본문의 ## 제목 목록. 번호는 enhance() 가 붙이는 h2·h3·h4 순번과 같다. */
+function pageHeadings(page) {
+  const out = [];
+  let n = 0;
+  for (const m of page.body.matchAll(/^(#{2,4})\s+(.*)$/gm)) {
+    if (m[1].length === 2) out.push({ n, text: plainText(m[2]) });
+    n++;
+  }
+  return out;
+}
+
+// 세로 탭에는 짧게: "에피소드:" 와 끝의 (화수) 를 뗀다. 전체 제목은 title 속성으로.
+const shortLabel = (t) => t.replace(/^에피소드:\s*/, '').replace(/\s*\([^()]*\)\s*$/, '') || t;
+
+function mainNavItems(route) {
+  const items = state.model.tabs.map((t) => ({
+    href: tabHref(t.id, 0),
+    label: t.title,
+    icon: ICONS[t.id] ? t.id : 'page',
+    active: route.kind === 'tab' && route.tab === t,
+  }));
+  items.push({ href: '#/todo', label: '정할 것', icon: 'todo', active: route.kind === 'todo', badge: state.todos.length });
+  items.push({ href: '#/more', label: '더보기', icon: 'more', active: route.kind === 'more' });
+  return items;
+}
+
+function rail(route) {
+  // 넓은 화면: 큰 탭(세계관·스토리·등장인물…)도 여기에. 좁은 화면에서는 아래 탭 바가 맡는다.
+  const nav = `<nav class="rail-main">${mainNavItems(route)
     .map(
-      (p, i) => `<a href="${tabHref(tab.id, i)}" class="chip ${i === pageNo ? 'active' : ''}">${esc(p.title)}</a>`,
+      (i) => `<a href="${i.href}" class="${i.active ? 'active' : ''}">${icon(i.icon)}<span>${esc(i.label)}</span>${i.badge ? `<em class="badge">${i.badge}</em>` : ''}</a>`,
     )
-    .join('')}</div>`;
+    .join('')}</nav>`;
+  if (route.kind !== 'tab' || !state.snapshot || !route.tab.pages.length) {
+    return `<aside class="rail rail-wide-only" id="rail">${nav}</aside>`;
+  }
+  const { tab, pageNo } = route;
+  const items = tab.pages
+    .map((p, i) => {
+      const active = i === pageNo;
+      let sub = '';
+      if (active && !tab.stacked) {
+        const hs = pageHeadings(p).filter((h, k) => !(k === 0 && h.text === p.title.replace(/\s*·\s*/, ' — ')) && !(k === 0 && h.text === p.title));
+        if (hs.length > 1) {
+          sub = `<ol class="rail-sub">${hs
+            .map(
+              (h) => `<li><a href="${tabHref(tab.id, i, h.n)}" data-spy="p${p.globalIdx}-h${h.n}" title="${esc(h.text)}">${esc(shortLabel(h.text))}</a></li>`,
+            )
+            .join('')}</ol>`;
+        }
+      }
+      return `<li><a href="${tabHref(tab.id, i)}" class="rail-item ${active ? 'active' : ''}" ${tab.stacked ? `data-spy="page-${p.globalIdx}"` : ''} title="${esc(p.title)}">${esc(p.title)}</a>${sub}</li>`;
+    })
+    .join('');
+  return `<aside class="rail ${state.settings.railOpen ? '' : 'closed'}" id="rail">${nav}
+    <div class="rail-head">${esc(tab.title)} <small>${tab.pages.length}</small></div>
+    <ol class="rail-list">${items}</ol></aside>`;
+}
+
+/** 하위 탭 하나씩 보는 탭에서: 페이지 끝의 이전·다음 버튼 */
+function pagerHtml(route) {
+  const { tab, pageNo } = route;
+  if (tab.stacked || tab.pages.length <= 1) return '';
+  const prev = tab.pages[pageNo - 1];
+  const next = tab.pages[pageNo + 1];
+  return `<nav class="pager">
+    ${prev ? `<a class="pager-btn" href="${tabHref(tab.id, pageNo - 1)}">${icon('prev')}<span><small>이전</small>${esc(prev.title)}</span></a>` : '<span></span>'}
+    ${next ? `<a class="pager-btn next" href="${tabHref(tab.id, pageNo + 1)}"><span><small>다음</small>${esc(next.title)}</span>${icon('next')}</a>` : '<span></span>'}
+  </nav>`;
 }
 
 function pageHtml(page) {
@@ -239,7 +306,7 @@ function tabView(route) {
   if (!state.snapshot) return onboarding();
   if (!tab.pages.length) return '<p class="empty">이 탭에는 아직 내용이 없습니다.</p>';
   const pages = tab.stacked ? tab.pages : [tab.pages[pageNo]];
-  return pages.map(pageArticle).join('');
+  return pages.map(pageArticle).join('') + pagerHtml(route);
 }
 
 function todoView() {
@@ -419,11 +486,16 @@ function render({ keepScroll = false } = {}) {
     default:
       main = state.snapshot ? '<p class="empty">index.json 에 탭이 없습니다.</p>' : onboarding();
   }
-  app.innerHTML = `${topBar()}${route.kind === 'tab' && state.snapshot ? chips(route) : ''}
-    <main class="main view-${route.kind}">${main}</main>${bottomNav(route)}`;
+  currentRoute.value = route;
+  app.innerHTML = `${topBar()}
+    <div class="shell ${railAvailable() && state.settings.railOpen ? 'with-rail' : ''}">${rail(route)}
+      <main class="main view-${route.kind}">${main}</main>
+    </div>${bottomNav(route)}
+    <button class="to-top" id="to-top" aria-label="맨 위로">${icon('up')}</button>`;
 
   app.querySelectorAll('article.page').forEach((a) => enhance(a, Number(a.dataset.g)));
   bindView(route);
+  setupSpy();
 
   if (route.kind === 'search') {
     renderResults();
@@ -438,10 +510,8 @@ function render({ keepScroll = false } = {}) {
 }
 
 function scrollToRoute(route) {
-  // 칩 목록은 세로로 스크롤되므로 페이지 전체가 아니라 칩 상자 안에서만 활성 칩이 보이게 한다.
-  const box = document.getElementById('chips');
-  const active = box?.querySelector('.chip.active');
-  if (box && active) box.scrollTop = active.offsetTop - box.offsetTop - 8;
+  // 세로 탭은 따로 스크롤되므로 그 안에서만 활성 항목이 보이게 한다.
+  revealInRail(document.querySelector('#rail .rail-item.active'));
   if (route.kind !== 'tab') {
     window.scrollTo(0, 0);
     return;
@@ -458,6 +528,46 @@ function scrollToRoute(route) {
     window.scrollTo(0, 0);
   }
 }
+
+function revealInRail(el) {
+  const box = document.getElementById('rail');
+  if (!box || !el) return;
+  const top = el.offsetTop - box.offsetTop;
+  if (top < box.scrollTop + 40 || top > box.scrollTop + box.clientHeight - 60) box.scrollTop = top - box.clientHeight / 3;
+}
+
+// 스크롤 위치에 맞춰 세로 탭의 '지금 보는 곳'을 표시한다 (주소는 바꾸지 않는다).
+let spyObserver = null;
+function setupSpy() {
+  spyObserver?.disconnect();
+  const links = [...document.querySelectorAll('#rail [data-spy]')];
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  const byId = new Map(links.map((a) => [a.dataset.spy, a]));
+  const visible = new Set();
+  spyObserver = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) e.isIntersecting ? visible.add(e.target) : visible.delete(e.target);
+      const targets = [...byId.keys()].map((id) => document.getElementById(id)).filter(Boolean);
+      // 화면 위쪽에 가장 가까운(이미 지나온 것 중 마지막) 대상
+      let current = null;
+      for (const t of targets) if (t.getBoundingClientRect().top <= 140) current = t;
+      if (!current) current = targets.find((t) => visible.has(t)) || targets[0];
+      links.forEach((a) => a.classList.toggle('current', a.dataset.spy === current?.id));
+      revealInRail(byId.get(current?.id));
+    },
+    { rootMargin: '-120px 0px -55% 0px' },
+  );
+  for (const id of byId.keys()) {
+    const el = document.getElementById(id);
+    if (el) spyObserver.observe(el);
+  }
+}
+
+window.addEventListener(
+  'scroll',
+  () => document.getElementById('to-top')?.classList.toggle('show', window.scrollY > 700),
+  { passive: true },
+);
 
 function refreshStatus() {
   const el = document.getElementById('status');
@@ -477,6 +587,11 @@ function bindView(route) {
   if (route.kind !== 'more') document.getElementById('sync-now')?.addEventListener('click', () => doSync({ manual: true }));
   document.getElementById('share-toggle')?.addEventListener('click', toggleShare);
   document.getElementById('sync-btn')?.addEventListener('click', () => doSync({ manual: true }));
+  document.getElementById('rail-toggle')?.addEventListener('click', () => {
+    updateSettings({ railOpen: !state.settings.railOpen });
+    render({ keepScroll: true });
+  });
+  document.getElementById('to-top')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
   if (route.kind === 'search') {
     document.getElementById('q')?.addEventListener('input', (e) => {
