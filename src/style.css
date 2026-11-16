@@ -406,3 +406,5 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
   .prop-content { font-size: .82rem; }
   .proposal .row .btn { flex: 1; }
 }
+.seg-btn .lab-short { display: none; }
+@media (max-width: 899px) { .composer .seg-btn .lab-long { display: none; } .composer .seg-btn .lab-short { display: inline; } }

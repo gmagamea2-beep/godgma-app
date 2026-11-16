@@ -672,6 +672,7 @@ function aiView() {
   ${hasKey ? '' : `<p class="error">Gemini 키가 아직 없습니다. ${isOwner() ? '더보기 → AI · 실명 설정에서 넣으세요.' : '주인에게 설정을 부탁하세요.'}</p>`}
   <div class="chat" id="chat">
     ${msgs || `<div class="chat-empty">
+      <p><b>자유 대화</b> — 설정집과 상관없이 편하게 이야기합니다. 설정집은 보내지 않습니다.</p>
       <p><b>설정집 질문</b> — 설정집에서 찾아 답합니다.</p>
       <p><b>집필 보조</b> — 초안 · 문장 다듬기 · 설정 충돌 찾기.</p>
       <p><b>설정 추가</b> — 말한 내용을 설정집 문서에 넣을 수정안으로 만들고, 확인하면 원본 저장소에 바로 커밋합니다.</p>
@@ -682,7 +683,7 @@ function aiView() {
   </div>
   <form id="ai-form" class="composer">
     <div class="seg" role="tablist">${Object.entries(MODES)
-      .map(([k, m]) => `<button type="button" class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}">${esc(m.label)}</button>`)
+      .map(([k, m]) => `<button type="button" class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}" title="${esc(m.label)}"><span class="lab-long">${esc(m.label)}</span><span class="lab-short">${esc(m.short || m.label)}</span></button>`)
       .join('')}</div>
     <div class="composer-row">
       <textarea id="ai-q" rows="1" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.draft)}</textarea>
@@ -727,7 +728,8 @@ async function runAi(e) {
   const ai = state.ai;
   const q = (document.getElementById('ai-q')?.value || '').trim();
   if (!q || ai.busy) return;
-  if (!state.snapshot) {
+  const noContext = Boolean(MODES[ai.mode]?.noContext);
+  if (!state.snapshot && !noContext) {
     ai.error = '먼저 설정집을 동기화하세요.';
     render({ keepScroll: true });
     return;
@@ -743,8 +745,9 @@ async function runAi(e) {
   render({ keepScroll: true });
   scrollChat();
   try {
-    const model = maskedModel();
-    const context = buildContext(model, q + ' ' + history.slice(-2).map((h) => h.text).join(' ').slice(0, 300));
+    // 자유 대화는 설정집을 보내지 않는다 (비용도 적다)
+    const model = noContext ? null : maskedModel();
+    const context = noContext ? '' : buildContext(model, q + ' ' + history.slice(-2).map((h) => h.text).join(' ').slice(0, 300));
     const text = await askGemini({
       key: state.secrets?.geminiKey,
       model: state.secrets?.geminiModel || DEFAULT_MODEL,

@@ -13,8 +13,19 @@ const CONTEXT_BUDGET = 60000; // 한 번에 보내는 설정집 글자 수 상�
 const ALWAYS_TABS = ['world', 'chars']; // 질문과 상관없이 늘 넣는 탭 (작아서)
 
 export const MODES = {
+  chat: {
+    label: '자유 대화',
+    short: '대화',
+    noContext: true,
+    placeholder: '아무 얘기나 해 보세요',
+    system: `너는 친근한 한국어 대화 상대다. 사용자는 웹소설 「그마 세계관」을 쓰는 작가다.
+- 편하게 존댓말(~요)로 짧고 자연스럽게 답한다.
+- 모르는 건 모른다고 말하고, 사실처럼 지어내지 않는다.
+- 성적인 묘사·성적인 농담은 쓰지 않는다.`,
+  },
   ask: {
     label: '설정집 질문',
+    short: '질문',
     placeholder: '예: 서민찬의 시간과 정신의 방 설정이 뭐였지?',
     system: `너는 웹소설 「그마 세계관」 설정집의 사서다. 아래 [설정집 발췌]만 근거로 한국어로 답한다.
 - 발췌에 없는 내용은 지어내지 말고 "설정집에서 찾지 못했어요"라고 말한다.
@@ -23,6 +34,7 @@ export const MODES = {
   },
   write: {
     label: '집필 보조',
+    short: '집필',
     placeholder: '예: 1부 105화 「알현」 초안을 써 줘 / 이 문단을 다듬어 줘 / 설정 충돌을 찾아 줘',
     system: `너는 웹소설 「그마 세계관」의 집필 보조다. 아래 [설정집 발췌]와 기존 문체에 맞춰 한국어로 돕는다.
 - 짧은 문장, 행갈이가 잦은 기존 문체를 따른다. 기술명은 「」로 감싼다.
@@ -33,6 +45,7 @@ export const MODES = {
   },
   add: {
     label: '설정 추가',
+    short: '설정 추가',
     placeholder: '예: 서민찬 문서에 "좋아하는 음식: 국수" 추가해 줘 / 요람 문서의 미정 항목을 채워 줘',
     json: true,
     system: `너는 웹소설 「그마 세계관」 설정집의 편집자다. 작가가 말한 내용을 설정집 Markdown 문서에 넣을 수정안으로 만든다.
@@ -138,11 +151,17 @@ export async function askGemini({ key, model, mode, question, context, catalog =
         ...history.map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
         {
           role: 'user',
-          parts: [{ text: `${catalog ? `[문서 목록]\n${catalog}\n\n` : ''}[설정집 발췌]\n${context}\n\n[요청]\n${question}` }],
+          parts: [
+            {
+              text: m.noContext
+                ? question
+                : `${catalog ? `[문서 목록]\n${catalog}\n\n` : ''}[설정집 발췌]\n${context}\n\n[요청]\n${question}`,
+            },
+          ],
         },
       ],
       generationConfig: {
-        temperature: mode === 'write' ? 0.9 : 0.2,
+        temperature: mode === 'write' ? 0.9 : mode === 'chat' ? 0.8 : 0.2,
         ...(m.json ? { responseMimeType: 'application/json' } : {}),
       },
     }),
