@@ -8,8 +8,9 @@
 // 권한은 화면이 아니라 Firestore 보안 규칙(firebase/firestore.rules)이 지킨다.
 // 주인 이메일은 이 공개 코드에 쓰지 않는다. 규칙에는 이메일의 SHA-256 해시만 들어 있다.
 //
-// Firebase 웹 설정(apiKey 등)은 비밀이 아니지만, 빌드할 때 환경 변수 VITE_FIREBASE_CONFIG(JSON)로 넣는다.
-// 설정이 없으면 계정 기능은 꺼지고 앱은 지금처럼 동작한다.
+// Firebase 웹 설정(apiKey 등)은 비밀이 아니다(웹 앱이면 누구나 볼 수 있는 값이고, 권한은 보안 규칙이 지킨다).
+// src/firebase.config.json 에 두고, 빌드 환경 변수 VITE_FIREBASE_CONFIG(JSON)가 있으면 그것을 먼저 쓴다.
+// 둘 다 없으면 계정 기능은 꺼지고 앱은 지금처럼 동작한다.
 
 export const ROLES = Object.freeze({
   reader: '독자',
@@ -19,9 +20,11 @@ export const ROLES = Object.freeze({
 const RANK = { reader: 1, writer: 2, owner: 3 };
 export const atLeast = (role, min) => (RANK[role] || 0) >= RANK[min];
 
+import fileConfig from './firebase.config.json';
+
 function readConfig() {
   const raw = import.meta.env.VITE_FIREBASE_CONFIG;
-  if (!raw) return null;
+  if (!raw) return fileConfig?.apiKey && fileConfig?.projectId ? fileConfig : null;
   try {
     const c = JSON.parse(raw);
     return c && c.apiKey && c.projectId ? c : null;

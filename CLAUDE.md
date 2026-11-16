@@ -58,7 +58,7 @@ firebase/firestore.rules  보안 규칙(콘솔에 붙여 넣음). 주인은 이�
 
 ## 계정 · AI
 
-- Firebase 웹 설정은 저장소 Variables `FIREBASE_CONFIG`(JSON) → 빌드 시 `VITE_FIREBASE_CONFIG`. 없으면 계정 기능이 꺼진다.
+- Firebase 웹 설정은 `src/firebase.config.json`(비밀 아님, 프로젝트 gmaworld-7a1b9). 저장소 Variables `FIREBASE_CONFIG` 가 있으면 그것이 우선.
 - 역할: 가입하면 독자(가림본), 주인이 작가로 지정(실명본 자동 열기 + AI), 주인은 한 사람(규칙의 이메일 해시).
 - Gemini 키·모델·실명 보기 코드는 Firestore `secrets/app`(작가 이상 읽기, 주인만 쓰기). 코드·저장소에 넣지 않는다.
 - AI 에 보내는 설정집은 share_rules.json 으로 가린 것만. 가릴 수 없으면 보내지 않는다.
