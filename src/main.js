@@ -617,7 +617,10 @@ function bindAccount(route) {
     try {
       await signIn();
     } catch (err) {
-      state.account.error = `로그인하지 못했습니다: ${err.code || err.message}`;
+      state.account.error =
+        err.code === 'auth/unauthorized-domain'
+          ? `로그인하지 못했습니다: 이 주소(${location.hostname})가 Firebase 승인된 도메인에 없습니다.`
+          : `로그인하지 못했습니다: ${err.code || err.message}`;
       render({ keepScroll: true });
     }
   });
