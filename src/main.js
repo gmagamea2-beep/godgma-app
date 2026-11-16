@@ -508,6 +508,29 @@ function accountCard() {
   ${isOwner() ? ownerCards() : ''}`;
 }
 
+// 앱을 열었을 때 로그인하지 않았으면 로그인 창을 띄운다. "로그인 없이 보기"를 누르면 이번 실행 동안은 다시 띄우지 않는다.
+const LOGIN_SKIP_KEY = 'godgma.loginSkip';
+function loginModal() {
+  const a = state.account;
+  if (!a.enabled || !a.ready || a.user) return '';
+  let skipped = state.loginSkipped;
+  try {
+    skipped ||= sessionStorage.getItem(LOGIN_SKIP_KEY) === '1';
+  } catch {
+    /* 무시 */
+  }
+  if (skipped) return '';
+  return `<div class="modal-back" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="modal card">
+      <h2 id="login-title">로그인</h2>
+      <p class="hint">구글 계정으로 로그인하면 바로 <b>독자</b>로 가입됩니다. 작가는 주인이 지정합니다.</p>
+      ${a.error ? `<p class="error">${esc(a.error)}</p>` : ''}
+      <button class="btn primary wide" id="sign-in-modal">${icon('user')} 구글 계정으로 로그인 · 가입</button>
+      <button class="btn wide" id="login-skip">로그인 없이 보기</button>
+    </div>
+  </div>`;
+}
+
 function ownerCards() {
   const sec = state.secrets || {};
   const users = state.users;
@@ -613,7 +636,16 @@ async function runAi(e) {
 }
 
 function bindAccount(route) {
-  document.getElementById('sign-in')?.addEventListener('click', async () => {
+  document.getElementById('login-skip')?.addEventListener('click', () => {
+    try {
+      sessionStorage.setItem(LOGIN_SKIP_KEY, '1');
+    } catch {
+      /* 저장소가 막혀도 이번 화면에서만 닫는다 */
+    }
+    state.loginSkipped = true;
+    render({ keepScroll: true });
+  });
+  document.querySelectorAll('#sign-in, #sign-in-modal').forEach((btn) => btn.addEventListener('click', async () => {
     try {
       await signIn();
     } catch (err) {
@@ -623,7 +655,7 @@ function bindAccount(route) {
           : `로그인하지 못했습니다: ${err.code || err.message}`;
       render({ keepScroll: true });
     }
-  });
+  }));
   document.getElementById('sign-out')?.addEventListener('click', () => signOut().catch((err) => toast(err.message)));
   document.getElementById('reload-users')?.addEventListener('click', loadUsers);
   document.querySelectorAll('.role-select').forEach((sel) =>
@@ -786,7 +818,7 @@ function render({ keepScroll = false } = {}) {
     <div class="shell ${railAvailable() && state.settings.railOpen ? 'with-rail' : ''}">${rail(route)}
       <main class="main view-${route.kind}">${main}</main>
     </div>${bottomNav(route)}
-    <button class="to-top" id="to-top" aria-label="맨 위로">${icon('up')}</button>`;
+    <button class="to-top" id="to-top" aria-label="맨 위로">${icon('up')}</button>${loginModal()}`;
 
   app.querySelectorAll('article.page').forEach((a) => enhance(a, Number(a.dataset.g)));
   bindView(route);
