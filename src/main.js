@@ -421,7 +421,11 @@ ${accountCard()}
     </dl>
     ${state.lastError ? `<p class="error">${esc(state.lastError)}</p>` : ''}
     ${snap?.missing?.length ? `<p class="error">index.json 에 있지만 저장소에 없는 파일: ${snap.missing.map(esc).join(', ')}</p>` : ''}
-    <button class="btn primary" id="sync-now" ${state.syncing ? 'disabled' : ''}>${state.syncing ? '동기화 중…' : '지금 동기화'}</button>
+    <div class="row">
+      <button class="btn primary" id="sync-now" ${state.syncing ? 'disabled' : ''}>${state.syncing ? '동기화 중…' : '지금 동기화'}</button>
+      <button class="btn" id="force-reload">강제 새로고침</button>
+    </div>
+    <p class="hint">강제 새로고침: 기기에 저장된 앱 화면과 설정 데이터를 지우고 처음부터 다시 받습니다. 새 기능이 안 보이거나 내용이 안 바뀔 때 쓰세요. 로그인 · 토큰 · 보기 설정은 그대로입니다.</p>
   </section>
 
   <section class="card">
@@ -1220,6 +1224,7 @@ function bindView(route) {
       render({ keepScroll: true });
     });
     document.getElementById('clear-cache')?.addEventListener('click', clearCache);
+    document.getElementById('force-reload')?.addEventListener('click', forceReload);
     document.getElementById('repo-form')?.addEventListener('submit', saveRepoForm);
   }
 }
@@ -1307,6 +1312,29 @@ function saveRepoForm(e) {
   state.lastError = '';
   render({ keepScroll: true });
   doSync({ manual: true });
+}
+
+/** 강제 새로고침: 서비스 워커 캐시(앱 화면)와 IndexedDB 스냅샷(데이터)을 지우고 다시 연다. localStorage(로그인·토큰·설정)는 둔다. */
+async function forceReload() {
+  const btn = document.getElementById('force-reload');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '다시 받는 중…';
+  }
+  try {
+    await clearSnapshot();
+  } catch (err) {
+    console.warn('[reload] 데이터 사본을 지우지 못했다', err);
+  }
+  try {
+    if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+    if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+  } catch (err) {
+    console.warn('[reload] 앱 캐시를 지우지 못했다', err);
+  }
+  const url = new URL(location.href);
+  url.searchParams.set('r', Date.now().toString(36));
+  location.replace(url.href);
 }
 
 async function clearCache() {
