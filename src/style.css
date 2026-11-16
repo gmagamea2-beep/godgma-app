@@ -295,6 +295,7 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
   position: absolute; top: 6px; left: calc(50% + 6px);
   min-width: 18px; padding: 0 5px; border-radius: 9px;
   background: var(--accent-soft); color: var(--accent); font-size: .65rem; font-style: normal; line-height: 18px;
+  white-space: nowrap; box-sizing: border-box; text-align: center;
 }
 
 #toast {
@@ -390,3 +391,18 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 .prop-content { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: .88rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
 .prop-todo { font-size: .8rem; }
 .ok { color: #3fbf7f; }
+
+/* AI 창 — 폰 */
+@media (pointer: coarse) { .composer .hint { display: none; } }
+@media (max-width: 899px) {
+  .ai-head .view-title small { display: block; margin: 4px 0 0; font-size: .7rem; }
+  .composer { padding: 8px 12px 8px; margin: 12px -16px 0; }
+  .composer .seg { gap: 4px; margin-bottom: 6px; }
+  .composer .seg-btn { padding: 6px 4px; font-size: .8rem; border-radius: 999px; }
+  .composer textarea { padding: 9px 12px; font-size: 1rem; border-radius: 20px; }
+  .composer-row .btn { min-height: 42px; padding: 0 14px; border-radius: 21px; }
+  .bubble { padding: 9px 12px; font-size: .95rem; }
+  .msg.user .bubble { max-width: 85%; }
+  .prop-content { font-size: .82rem; }
+  .proposal .row .btn { flex: 1; }
+}

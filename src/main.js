@@ -685,7 +685,7 @@ function aiView() {
       .map(([k, m]) => `<button type="button" class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}">${esc(m.label)}</button>`)
       .join('')}</div>
     <div class="composer-row">
-      <textarea id="ai-q" rows="2" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.draft)}</textarea>
+      <textarea id="ai-q" rows="1" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.draft)}</textarea>
       <button class="btn primary" type="submit" ${ai.busy || !hasKey ? 'disabled' : ''} aria-label="보내기">보내기</button>
     </div>
     <p class="hint">Ctrl+Enter 로 보내기</p>
@@ -846,7 +846,16 @@ async function applyProposal(id) {
 function bindAi() {
   document.getElementById('ai-form')?.addEventListener('submit', runAi);
   const q = document.getElementById('ai-q');
-  q?.addEventListener('input', (e) => (state.ai.draft = e.target.value));
+  const grow = () => {
+    if (!q) return;
+    q.style.height = 'auto';
+    q.style.height = `${Math.min(q.scrollHeight + 2, window.innerHeight * 0.4)}px`;
+  };
+  grow();
+  q?.addEventListener('input', (e) => {
+    state.ai.draft = e.target.value;
+    grow();
+  });
   q?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runAi(e);
   });
