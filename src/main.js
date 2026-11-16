@@ -7,7 +7,9 @@ import { buildSearchIndex, collectTodos, search } from './search.js';
 import { DEFAULTS, FONT_SCALES, loadSettings, saveSettings, sourceKey } from './settings.js';
 import { SyncError, sync } from './sync.js';
 import { ROLES, accountsEnabled, atLeast, listUsers, readSecrets, setRole, signIn, signOut, watchAccount, writeSecrets } from './account.js';
-import { DEFAULT_MODEL, MODELS, MODES, askGemini, buildContext } from './ai.js';
+import { DEFAULT_MODEL, MODELS, MODES, askGemini, buildContext, pageCatalog } from './ai.js';
+import { applyChange, readFile, writeFile } from './ai-edit.js';
+import { createMasker } from './share.js';
 
 const isSite = () => state.settings.source === 'public' || state.settings.source === 'full';
 
@@ -35,7 +37,7 @@ const state = {
   account: { enabled: accountsEnabled(), ready: false, user: null, profile: null, error: '' },
   secrets: null, // 작가 이상만: { geminiKey, geminiModel, shareCode }
   users: null, // 주인만: 가입한 사람 목록
-  ai: { mode: 'ask', question: '', answer: '', busy: false, error: '' },
+  ai: { mode: 'ask', messages: [], draft: '', busy: false, error: '', applying: '' },
 };
 
 const role = () => (state.account.user && state.account.profile?.role) || '';
@@ -505,6 +507,15 @@ function accountCard() {
     }</p>
     <button class="btn" id="sign-out">로그아웃</button>
   </section>
+  ${canWrite() ? `<section class="card">
+    <h2>AI 설정 추가용 쓰기 토큰 <small>이 기기에만</small></h2>
+    <p class="hint">AI 창의 <b>설정 추가</b>로 만든 수정안을 원본 저장소에 바로 커밋할 때 씁니다. GitHub → Settings → Developer settings → Fine-grained tokens 에서 <b>godgma-data 하나만</b>, <b>Contents: Read and write</b> 로 만드세요.</p>
+    <form id="write-token-form" class="row" autocomplete="off">
+      <input class="code-input" name="writeToken" type="password" autocomplete="off" spellcheck="false" placeholder="${state.settings.writeToken ? '저장됨 — 바꾸려면 새로 입력' : 'github_pat_…'}" aria-label="쓰기 토큰">
+      <button class="btn primary" type="submit">저장</button>
+      <button class="btn" type="button" id="clear-write-token" ${state.settings.writeToken ? '' : 'disabled'}>지우기</button>
+    </form>
+  </section>` : ''}
   ${isOwner() ? ownerCards() : ''}`;
 }
 
@@ -573,27 +584,112 @@ function ownerCards() {
   </section>`;
 }
 
+// ---------- AI 창 (작가 이상) ----------
+// 대화형. 모드: 설정집 질문 · 집필 보조 · 설정 추가(수정안 → 확인 → 원본 저장소에 커밋)
+// 대화 기록은 이 기기의 localStorage 에만 둔다 (AI 에는 이름을 가린 글만 보냈으므로 기록에도 실명이 없다).
+
+const AI_CHAT_KEY = 'godgma.ai.chat.v1';
+const AI_KEEP = 40;
+const AI_HISTORY_TURNS = 8;
+
+function loadChat() {
+  try {
+    const v = JSON.parse(localStorage.getItem(AI_CHAT_KEY) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function saveChat() {
+  try {
+    localStorage.setItem(AI_CHAT_KEY, JSON.stringify(state.ai.messages.slice(-AI_KEEP)));
+  } catch {
+    /* 저장이 막혀도 이번 화면에서는 대화가 남는다 */
+  }
+}
+state.ai.messages = loadChat();
+state.ai.draft = '';
+
+const hasMask = (t) => /█/.test(String(t || ''));
+
+function proposalHtml(m) {
+  const p = m.proposal;
+  const tokenOk = Boolean(state.settings.writeToken);
+  const realOk = state.settings.source === 'full' || state.settings.source === 'github';
+  const changes = p.changes
+    .map(
+      (c, i) => `<div class="prop-change">
+        <div class="prop-target">${icon('page')} <b>${esc(c.title || `문서 ${c.page}`)}</b>${
+          c.replaceTodo ? `<small>미정 줄 채우기</small>` : c.heading ? `<small>「${esc(c.heading)}」 아래</small>` : '<small>문서 끝</small>'
+        }</div>
+        ${c.replaceTodo ? `<p class="hint prop-todo">바꿀 줄: ${esc(c.replaceTodo)}</p>` : ''}
+        <textarea class="prop-content" data-msg="${m.id}" data-i="${i}" rows="${Math.min(14, Math.max(4, c.content.split('\n').length + 1))}" ${p.status !== 'pending' ? 'readonly' : ''}>${esc(c.content)}</textarea>
+        ${hasMask(c.content) && p.status === 'pending' ? '<p class="error">가려진 이름(███)이 들어 있습니다. 실제 이름으로 고친 뒤 반영하세요.</p>' : ''}
+      </div>`,
+    )
+    .join('');
+  let foot = '';
+  if (p.status === 'pending') {
+    foot = `<div class="row">
+      <button class="btn primary" data-apply="${m.id}" ${state.ai.applying ? 'disabled' : ''}>${state.ai.applying === m.id ? '반영하는 중…' : '저장소에 반영'}</button>
+      <button class="btn" data-discard="${m.id}">버리기</button>
+    </div>
+    ${tokenOk ? '' : '<p class="hint">반영하려면 <a href="#/more">더보기 → 계정</a>에 GitHub 쓰기 토큰을 넣으세요.</p>'}
+    ${realOk ? '' : '<p class="hint">실명본을 연 상태에서만 반영할 수 있습니다.</p>'}`;
+  } else if (p.status === 'applied') {
+    foot = `<p class="ok">반영했습니다${p.result ? ` · ${esc(p.result)}` : ''}. 사이트에는 2~3분 뒤 보입니다.</p>`;
+  } else {
+    foot = '<p class="hint">버린 수정안입니다.</p>';
+  }
+  return `<div class="proposal">
+    <p>${esc(p.summary || '')}</p>
+    ${p.changes.length ? changes : ''}
+    ${p.changes.length ? `<label class="field">CHANGELOG 한 줄
+      <input class="prop-log" data-msg="${m.id}" value="${esc(p.changelog || '')}" ${p.status !== 'pending' ? 'readonly' : ''}></label>
+      ${hasMask(p.changelog) && p.status === 'pending' ? '<p class="error">CHANGELOG 에도 ███ 가 있습니다. 실제 이름으로 고치세요.</p>' : ''}${foot}` : ''}
+  </div>`;
+}
+
 function aiView() {
   if (!state.account.enabled || !canWrite()) {
     return `<h1 class="view-title">AI</h1><p class="empty">작가만 쓸 수 있습니다. 더보기 → 계정에서 로그인하세요.</p>`;
   }
   const ai = state.ai;
   const hasKey = Boolean(state.secrets?.geminiKey);
-  return `<h1 class="view-title">AI <small>${esc(MODELS.find((m) => m.id === (state.secrets?.geminiModel || DEFAULT_MODEL))?.label || '')}</small></h1>
+  const msgs = ai.messages
+    .map((m) =>
+      m.role === 'user'
+        ? `<div class="msg user"><span class="msg-mode">${esc(MODES[m.mode]?.label || '')}</span><div class="bubble">${esc(m.text)}</div></div>`
+        : `<div class="msg model"><div class="bubble">${
+            m.proposal ? proposalHtml(m) : `<div class="md">${renderMarkdown(m.text)}</div>`
+          }</div>${m.proposal ? '' : `<button class="link-btn" data-copy="${m.id}">복사</button>`}</div>`,
+    )
+    .join('');
+  return `<div class="ai-head">
+    <h1 class="view-title">AI <small>${esc(MODELS.find((m) => m.id === (state.secrets?.geminiModel || DEFAULT_MODEL))?.label || '')}</small></h1>
+    ${ai.messages.length ? '<button class="btn small" id="ai-new">새 대화</button>' : ''}
+  </div>
   ${hasKey ? '' : `<p class="error">Gemini 키가 아직 없습니다. ${isOwner() ? '더보기 → AI · 실명 설정에서 넣으세요.' : '주인에게 설정을 부탁하세요.'}</p>`}
-  <div class="seg" role="tablist">${Object.entries(MODES)
-    .map(([k, m]) => `<button class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}">${esc(m.label)}</button>`)
-    .join('')}</div>
-  <form id="ai-form" class="card">
-    <textarea id="ai-q" rows="${ai.mode === 'write' ? 8 : 3}" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.question)}</textarea>
-    <div class="row">
-      <button class="btn primary" type="submit" ${ai.busy || !hasKey ? 'disabled' : ''}>${ai.busy ? '생각하는 중…' : '보내기'}</button>
-      ${ai.answer ? '<button class="btn" type="button" id="ai-copy">답 복사</button>' : ''}
+  <div class="chat" id="chat">
+    ${msgs || `<div class="chat-empty">
+      <p><b>설정집 질문</b> — 설정집에서 찾아 답합니다.</p>
+      <p><b>집필 보조</b> — 초안 · 문장 다듬기 · 설정 충돌 찾기.</p>
+      <p><b>설정 추가</b> — 말한 내용을 설정집 문서에 넣을 수정안으로 만들고, 확인하면 원본 저장소에 바로 커밋합니다.</p>
+      <p class="hint">AI 에는 이름을 가린 내용만 보냅니다. 이름은 ███ 로 나옵니다.</p>
+    </div>`}
+    ${ai.busy ? '<div class="msg model"><div class="bubble typing">생각하는 중…</div></div>' : ''}
+    ${ai.error ? `<p class="error">${esc(ai.error)}</p>` : ''}
+  </div>
+  <form id="ai-form" class="composer">
+    <div class="seg" role="tablist">${Object.entries(MODES)
+      .map(([k, m]) => `<button type="button" class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}">${esc(m.label)}</button>`)
+      .join('')}</div>
+    <div class="composer-row">
+      <textarea id="ai-q" rows="2" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.draft)}</textarea>
+      <button class="btn primary" type="submit" ${ai.busy || !hasKey ? 'disabled' : ''} aria-label="보내기">보내기</button>
     </div>
-    <p class="hint">설정집에서 관련 있는 부분을 골라 이름을 가린 채 함께 보냅니다. 이름은 ███ 로 나옵니다.</p>
-  </form>
-  ${ai.error ? `<p class="error">${esc(ai.error)}</p>` : ''}
-  ${ai.answer ? `<article class="page ai-answer"><div class="md">${renderMarkdown(ai.answer)}</div></article>` : ''}`;
+    <p class="hint">Ctrl+Enter 로 보내기</p>
+  </form>`;
 }
 
 /** AI 에 보낼 모델: 언제나 이름을 가린 상태 */
@@ -605,34 +701,196 @@ function maskedModel() {
   return m;
 }
 
+function parseProposal(text, model) {
+  let data;
+  try {
+    data = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+  } catch {
+    throw new Error('AI 가 수정안을 형식에 맞게 주지 않았습니다. 다시 보내 보세요.');
+  }
+  const pages = new Map();
+  for (const tab of model.tabs) for (const p of tab.pages) pages.set(p.globalIdx, `${tab.title} › ${p.title}`);
+  const changes = (Array.isArray(data.changes) ? data.changes : [])
+    .map((c) => ({
+      page: Number(c.page),
+      heading: String(c.heading || ''),
+      replaceTodo: String(c.replaceTodo || ''),
+      content: String(c.content || '').trim(),
+    }))
+    .filter((c) => pages.has(c.page) && c.content)
+    .map((c) => ({ ...c, title: pages.get(c.page) }));
+  return { summary: String(data.summary || ''), changelog: String(data.changelog || '').trim(), changes, status: changes.length ? 'pending' : 'empty' };
+}
+
 async function runAi(e) {
-  e.preventDefault();
+  e?.preventDefault();
   const ai = state.ai;
-  ai.question = document.getElementById('ai-q')?.value.trim() || '';
-  if (!ai.question || ai.busy) return;
+  const q = (document.getElementById('ai-q')?.value || '').trim();
+  if (!q || ai.busy) return;
   if (!state.snapshot) {
     ai.error = '먼저 설정집을 동기화하세요.';
     render({ keepScroll: true });
     return;
   }
+  const history = ai.messages
+    .slice(-AI_HISTORY_TURNS)
+    .map((m) => ({ role: m.role, text: m.raw || m.text }))
+    .filter((h) => h.text);
+  ai.messages.push({ id: `m${Date.now()}`, role: 'user', mode: ai.mode, text: q });
+  ai.draft = '';
   ai.busy = true;
   ai.error = '';
   render({ keepScroll: true });
+  scrollChat();
   try {
-    const context = buildContext(maskedModel(), ai.question);
-    ai.answer = await askGemini({
+    const model = maskedModel();
+    const context = buildContext(model, q + ' ' + history.slice(-2).map((h) => h.text).join(' ').slice(0, 300));
+    const text = await askGemini({
       key: state.secrets?.geminiKey,
       model: state.secrets?.geminiModel || DEFAULT_MODEL,
       mode: ai.mode,
-      question: ai.question,
+      question: q,
       context,
+      history,
+      catalog: ai.mode === 'add' ? pageCatalog(model) : '',
     });
+    const msg = { id: `m${Date.now()}`, role: 'model', mode: ai.mode, text };
+    if (ai.mode === 'add') {
+      msg.proposal = parseProposal(text, model);
+      msg.raw = text;
+      msg.text = msg.proposal.summary;
+    }
+    ai.messages.push(msg);
+    saveChat();
   } catch (err) {
     ai.error = err.message;
   } finally {
     ai.busy = false;
+    if (parseRoute().kind === 'ai') {
+      render({ keepScroll: true });
+      scrollChat();
+    }
+  }
+}
+
+function scrollChat() {
+  requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+}
+
+const today = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+async function applyProposal(id) {
+  const ai = state.ai;
+  const msg = ai.messages.find((m) => m.id === id);
+  const p = msg?.proposal;
+  if (!p || p.status !== 'pending' || ai.applying) return;
+  // 화면에서 고친 내용을 먼저 가져온다
+  document.querySelectorAll(`.prop-content[data-msg="${id}"]`).forEach((ta) => (p.changes[Number(ta.dataset.i)].content = ta.value.trim()));
+  const logEl = document.querySelector(`.prop-log[data-msg="${id}"]`);
+  if (logEl) p.changelog = logEl.value.trim();
+  saveChat();
+  const s = state.settings;
+  if (!s.writeToken) return toast('더보기 → 계정에 GitHub 쓰기 토큰을 먼저 넣으세요.');
+  if (s.source !== 'full' && s.source !== 'github') return toast('실명본을 연 상태에서만 반영할 수 있습니다.');
+  if (p.changes.some((c) => hasMask(c.content)) || hasMask(p.changelog)) return toast('가려진 이름(███)을 실제 이름으로 고친 뒤 반영하세요.');
+  if (!confirm(`원본 저장소에 ${p.changes.length}곳을 반영할까요?`)) return;
+
+  ai.applying = id;
+  render({ keepScroll: true });
+  try {
+    const real = buildModel(state.snapshot, { shareMode: false });
+    const files = new Map();
+    for (const tab of real.tabs) for (const pg of tab.pages) files.set(pg.globalIdx, pg.file);
+    const mask = createMasker(state.snapshot.files['share_rules.json']?.text)?.mask || ((t) => t);
+    const repo = { owner: DEFAULTS.owner, repo: DEFAULTS.repo, branch: DEFAULTS.branch, ...(s.source === 'github' ? { owner: s.owner, repo: s.repo, branch: s.branch } : {}) };
+
+    const byFile = new Map();
+    for (const c of p.changes) {
+      const path = files.get(c.page);
+      if (!path) throw new Error(`문서 ${c.page} 를 찾지 못했습니다.`);
+      if (!byFile.has(path)) byFile.set(path, []);
+      byFile.get(path).push(c);
+    }
+    const wheres = [];
+    const message = `AI 설정 추가: ${p.changelog || p.summary}`.slice(0, 120);
+    for (const [path, list] of byFile) {
+      const { text, sha } = await readFile(repo, s.writeToken, path);
+      let next = text;
+      for (const c of list) {
+        const r = applyChange(next, c, mask);
+        next = r.text;
+        wheres.push(`${c.title.split(' › ').pop()} ${r.where}`);
+      }
+      await writeFile(repo, s.writeToken, path, next, sha, message);
+    }
+    const log = await readFile(repo, s.writeToken, 'CHANGELOG.md');
+    const line = `- ${today()}: ${p.changelog || p.summary} (AI 설정 추가)`;
+    await writeFile(repo, s.writeToken, 'CHANGELOG.md', log.text.replace(/\s*$/, '\n') + line + '\n', log.sha, message);
+    p.status = 'applied';
+    p.result = wheres.join(' · ');
+    saveChat();
+    toast('원본 저장소에 반영했습니다.');
+  } catch (err) {
+    toast(err.message);
+    ai.error = `반영하지 못했습니다: ${err.message}`;
+  } finally {
+    ai.applying = '';
     if (parseRoute().kind === 'ai') render({ keepScroll: true });
   }
+}
+
+function bindAi() {
+  document.getElementById('ai-form')?.addEventListener('submit', runAi);
+  const q = document.getElementById('ai-q');
+  q?.addEventListener('input', (e) => (state.ai.draft = e.target.value));
+  q?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runAi(e);
+  });
+  document.querySelectorAll('.seg-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      state.ai.mode = b.dataset.mode;
+      render({ keepScroll: true });
+      document.getElementById('ai-q')?.focus();
+    }),
+  );
+  document.getElementById('ai-new')?.addEventListener('click', () => {
+    if (!confirm('대화를 지우고 새로 시작할까요?')) return;
+    state.ai.messages = [];
+    state.ai.error = '';
+    saveChat();
+    render();
+  });
+  document.querySelectorAll('[data-copy]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const m = state.ai.messages.find((x) => x.id === b.dataset.copy);
+      navigator.clipboard?.writeText(m?.text || '').then(() => toast('복사했습니다.'), () => toast('복사하지 못했습니다.'));
+    }),
+  );
+  document.querySelectorAll('[data-apply]').forEach((b) => b.addEventListener('click', () => applyProposal(b.dataset.apply)));
+  document.querySelectorAll('[data-discard]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const m = state.ai.messages.find((x) => x.id === b.dataset.discard);
+      if (m?.proposal) m.proposal.status = 'discarded';
+      saveChat();
+      render({ keepScroll: true });
+    }),
+  );
+  document.querySelectorAll('.prop-log').forEach((el) =>
+    el.addEventListener('input', () => {
+      const m = state.ai.messages.find((x) => x.id === el.dataset.msg);
+      if (m?.proposal) m.proposal.changelog = el.value;
+    }),
+  );
+  document.querySelectorAll('.prop-content').forEach((ta) =>
+    ta.addEventListener('input', () => {
+      const m = state.ai.messages.find((x) => x.id === ta.dataset.msg);
+      if (m?.proposal) m.proposal.changes[Number(ta.dataset.i)].content = ta.value;
+    }),
+  );
 }
 
 function bindAccount(route) {
@@ -672,6 +930,20 @@ function bindAccount(route) {
     }),
   );
   document.getElementById('secrets-form')?.addEventListener('submit', saveSecretsForm);
+  document.getElementById('write-token-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const t = String(new FormData(e.target).get('writeToken') || '').trim();
+    if (!t) return;
+    if (/\s/.test(t)) return toast('토큰에 공백이 들어 있습니다.');
+    updateSettings({ writeToken: t });
+    toast('쓰기 토큰을 이 기기에 저장했습니다.');
+    render({ keepScroll: true });
+  });
+  document.getElementById('clear-write-token')?.addEventListener('click', () => {
+    updateSettings({ writeToken: '' });
+    toast('쓰기 토큰을 지웠습니다.');
+    render({ keepScroll: true });
+  });
   document.getElementById('clear-gemini')?.addEventListener('click', async () => {
     if (!confirm('Gemini 키를 지울까요?')) return;
     try {
@@ -683,19 +955,8 @@ function bindAccount(route) {
       toast(`지우지 못했습니다: ${err.message}`);
     }
   });
-  if (route.kind === 'ai') {
-    document.getElementById('ai-form')?.addEventListener('submit', runAi);
-    document.getElementById('ai-q')?.addEventListener('input', (e) => (state.ai.question = e.target.value));
-    document.querySelectorAll('.seg-btn').forEach((b) =>
-      b.addEventListener('click', () => {
-        state.ai.mode = b.dataset.mode;
-        render({ keepScroll: true });
-      }),
-    );
-    document.getElementById('ai-copy')?.addEventListener('click', () =>
-      navigator.clipboard?.writeText(state.ai.answer).then(() => toast('복사했습니다.'), () => toast('복사하지 못했습니다.')),
-    );
-  }
+  if (route.kind === 'ai') bindAi();
+
 }
 
 async function saveSecretsForm(e) {

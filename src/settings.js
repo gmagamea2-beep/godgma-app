@@ -6,6 +6,7 @@ export const DEFAULTS = Object.freeze({
   repo: 'godgma-data',
   branch: 'main',
   token: '',
+  writeToken: '', // AI 설정 추가용 GitHub 쓰기 토큰 (godgma-data Contents 읽기·쓰기). 이 기기에만.
   // 'public'(사이트 공개본, 두 이름 가림) | 'full'(코드로 연 실명본) | 'github'(작가용 원본 저장소) | 'local'(개발 서버 전용)
   source: 'public',
   shareCode: '',

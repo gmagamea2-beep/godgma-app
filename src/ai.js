@@ -31,7 +31,29 @@ export const MODES = {
 - 작가가 정하지 않은 내용을 새로 지어냈다면 그 부분에 (제안 초안)이라고 표시한다.
 - ███ 로 가려진 이름은 그대로 ███ 로 쓴다.`,
   },
+  add: {
+    label: '설정 추가',
+    placeholder: '예: 서민찬 문서에 "좋아하는 음식: 국수" 추가해 줘 / 요람 문서의 미정 항목을 채워 줘',
+    json: true,
+    system: `너는 웹소설 「그마 세계관」 설정집의 편집자다. 작가가 말한 내용을 설정집 Markdown 문서에 넣을 수정안으로 만든다.
+반드시 아래 JSON 하나로만 답한다. 다른 글은 쓰지 않는다.
+{"summary": "무엇을 어디에 넣는지 한두 문장", "changes": [{"page": 문서 번호(정수), "heading": "넣을 자리의 제목(## 또는 ### 뒤 글자 그대로, 문서 끝이면 빈 문자열)", "replaceTodo": "채울 미정 줄 원문(- [ ] 로 시작하는 줄 그대로, 없으면 빈 문자열)", "content": "넣을 Markdown"}], "changelog": "CHANGELOG 한 줄 요약(날짜 빼고)"}
+규칙:
+- page 는 [문서 목록]의 번호만 쓴다. 없는 문서는 만들지 않는다.
+- 기존 문체를 따른다: 표는 | **항목** | 내용 | 형식, 기술명은 「」, 미정은 - [ ] 또는 ☐.
+- 작가가 직접 말하지 않은 내용을 지어 넣었다면 그 줄 끝에 (제안 초안)을 붙인다.
+- ███ 로 가려진 이름은 그대로 ███ 로 쓴다. 추측하지 않는다.
+- 성적인 묘사·성적인 농담은 넣지 않는다.
+- 넣을 게 없거나 요청이 불분명하면 changes 를 빈 배열로 두고 summary 에 무엇을 더 알려 줘야 하는지 쓴다.`,
+  },
 };
+
+/** 설정 추가용: 문서 목록 (번호 = globalIdx) */
+export function pageCatalog(model) {
+  const lines = [];
+  for (const tab of model.tabs) for (const p of tab.pages) lines.push(`${p.globalIdx}. ${tab.title} › ${p.title}`);
+  return lines.join('\n');
+}
 
 /** 모델(가린 상태)에서 제목 단위 덩어리를 만든다 */
 function chunksOf(model) {
@@ -101,7 +123,10 @@ export function buildContext(model, question, { extra = '' } = {}) {
   return picked.join('\n');
 }
 
-export async function askGemini({ key, model, mode, question, context }) {
+/**
+ * history: [{ role: 'user' | 'model', text }] (이전 대화, 짧게). 마지막 질문에만 설정집 발췌를 붙인다.
+ */
+export async function askGemini({ key, model, mode, question, context, catalog = '', history = [] }) {
   if (!key) throw new Error('Gemini 키가 설정되지 않았습니다. 주인이 더보기 → 계정에서 넣어야 합니다.');
   const m = MODES[mode] || MODES.ask;
   const res = await fetch(`${ENDPOINT}/${encodeURIComponent(model || DEFAULT_MODEL)}:generateContent`, {
@@ -109,8 +134,17 @@ export async function askGemini({ key, model, mode, question, context }) {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: m.system }] },
-      contents: [{ role: 'user', parts: [{ text: `[설정집 발췌]\n${context}\n\n[요청]\n${question}` }] }],
-      generationConfig: { temperature: mode === 'write' ? 0.9 : 0.2 },
+      contents: [
+        ...history.map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
+        {
+          role: 'user',
+          parts: [{ text: `${catalog ? `[문서 목록]\n${catalog}\n\n` : ''}[설정집 발췌]\n${context}\n\n[요청]\n${question}` }],
+        },
+      ],
+      generationConfig: {
+        temperature: mode === 'write' ? 0.9 : 0.2,
+        ...(m.json ? { responseMimeType: 'application/json' } : {}),
+      },
     }),
   });
   let data = null;

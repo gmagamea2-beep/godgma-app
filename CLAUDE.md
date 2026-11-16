@@ -29,7 +29,8 @@ src/markdown.js     marked + DOMPurify, 한국어 굵게/기울임 보정, 물�
 src/search.js       전체 검색, "정할 것" 모으기
 src/style.css       다크/라이트 테마, 인쇄용 CSS
 src/account.js      계정(Firebase 구글 로그인, Firestore 역할: 독자·작가·주인, secrets/app)
-src/ai.js           Gemini 호출(작가 이상). 설정집은 항상 이름을 가린 채 보낸다
+src/ai.js           Gemini 호출(작가 이상). 설정집은 항상 이름을 가린 채 보낸다. 모드: 질문·집필·설정 추가(JSON 수정안)
+src/ai-edit.js      설정 추가 수정안을 godgma-data 에 커밋(GitHub contents API, 쓰기 토큰은 기기 localStorage 에만)
 firebase/firestore.rules  보안 규칙(콘솔에 붙여 넣음). 주인은 이메일 SHA-256 해시로만 적는다
 ```
 
@@ -63,3 +64,4 @@ firebase/firestore.rules  보안 규칙(콘솔에 붙여 넣음). 주인은 이�
 - Gemini 키·모델·실명 보기 코드는 Firestore `secrets/app`(작가 이상 읽기, 주인만 쓰기). 코드·저장소에 넣지 않는다.
 - AI 에 보내는 설정집은 share_rules.json 으로 가린 것만. 가릴 수 없으면 보내지 않는다.
 - 주인 이메일을 코드·규칙에 평문으로 쓰지 않는다.
+- AI 창은 대화형(기록은 기기 localStorage). 설정 추가 수정안에 ███ 가 남아 있으면 커밋하지 않는다(작가가 실제 이름으로 고친 뒤 반영).

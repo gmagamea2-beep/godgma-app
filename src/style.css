@@ -354,3 +354,39 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 .modal { width: 100%; max-width: 380px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
 .modal h2 { margin-bottom: 0; }
 .btn.wide { width: 100%; }
+
+/* ---------- AI 창 ---------- */
+.ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn.small { min-height: 34px; padding: 0 12px; font-size: .85rem; white-space: nowrap; flex: none; }
+.prop-log { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; }
+.chat { display: flex; flex-direction: column; gap: 14px; }
+.chat-empty { color: var(--muted); font-size: .95rem; }
+.chat-empty p { margin: 0 0 8px; }
+.msg { display: flex; flex-direction: column; max-width: 100%; }
+.msg.user { align-items: flex-end; }
+.msg.model { align-items: flex-start; }
+.msg-mode { font-size: .72rem; color: var(--muted); margin: 0 4px 2px; }
+.bubble { padding: 10px 14px; border-radius: 16px; line-height: 1.65; overflow-wrap: anywhere; max-width: min(100%, 720px); }
+.msg.user .bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.msg.model .bubble { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 4px; width: 100%; box-sizing: border-box; }
+.msg.model .bubble .md > :first-child { margin-top: 0; }
+.msg.model .bubble .md > :last-child { margin-bottom: 0; }
+.bubble.typing { color: var(--muted); width: auto !important; }
+.link-btn { background: none; border: 0; color: var(--muted); font: inherit; font-size: .8rem; padding: 4px 6px; cursor: pointer; }
+.composer {
+  position: sticky; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom)); z-index: 20;
+  margin: 16px -16px 0; padding: 10px 16px 6px; background: var(--bg); border-top: 1px solid var(--line);
+}
+.composer .seg { margin-bottom: 8px; }
+.composer .seg-btn { padding: 7px 6px; font-size: .85rem; }
+.composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; line-height: 1.5; resize: none; max-height: 40vh; }
+.composer .hint { margin: 4px 0 0; font-size: .75rem; }
+.proposal p { margin: 0 0 10px; }
+.prop-change { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 10px; background: var(--bg); }
+.prop-target { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; font-size: .9rem; }
+.prop-target .icon { width: 16px; height: 16px; }
+.prop-target small { color: var(--muted); }
+.prop-content { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: .88rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+.prop-todo { font-size: .8rem; }
+.ok { color: #3fbf7f; }
