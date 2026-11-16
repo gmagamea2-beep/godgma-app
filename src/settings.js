@@ -9,6 +9,7 @@ export const DEFAULTS = Object.freeze({
   // 'public'(사이트 공개본, 두 이름 가림) | 'full'(코드로 연 실명본) | 'github'(작가용 원본 저장소) | 'local'(개발 서버 전용)
   source: 'public',
   shareCode: '',
+  autoFull: false, // 작가 계정으로 로그인해서 자동으로 연 실명본인지
   theme: 'dark', // 'dark' | 'light' | 'system'
   fontScale: 1, // 1 | 1.125 | 1.25
   shareMode: false,

@@ -28,6 +28,9 @@ src/share.js        공유 모드 가리기 (규칙은 데이터 저장소의 sh
 src/markdown.js     marked + DOMPurify, 한국어 굵게/기울임 보정, 물결표 취소선 방지
 src/search.js       전체 검색, "정할 것" 모으기
 src/style.css       다크/라이트 테마, 인쇄용 CSS
+src/account.js      계정(Firebase 구글 로그인, Firestore 역할: 독자·작가·주인, secrets/app)
+src/ai.js           Gemini 호출(작가 이상). 설정집은 항상 이름을 가린 채 보낸다
+firebase/firestore.rules  보안 규칙(콘솔에 붙여 넣음). 주인은 이메일 SHA-256 해시로만 적는다
 ```
 
 ## 지킬 것
@@ -52,3 +55,11 @@ src/style.css       다크/라이트 테마, 인쇄용 CSS
 - godgma-data 에 커밋하면 그쪽 `notify-app.yml` 이 `repository_dispatch(data-updated)` 를 보내 이 저장소의 배포가 돈다.
   (godgma-data 쪽 Secret: `APP_DISPATCH_TOKEN`, godgma-app 에 Contents 읽기·쓰기)
 
+
+## 계정 · AI
+
+- Firebase 웹 설정은 저장소 Variables `FIREBASE_CONFIG`(JSON) → 빌드 시 `VITE_FIREBASE_CONFIG`. 없으면 계정 기능이 꺼진다.
+- 역할: 가입하면 독자(가림본), 주인이 작가로 지정(실명본 자동 열기 + AI), 주인은 한 사람(규칙의 이메일 해시).
+- Gemini 키·모델·실명 보기 코드는 Firestore `secrets/app`(작가 이상 읽기, 주인만 쓰기). 코드·저장소에 넣지 않는다.
+- AI 에 보내는 설정집은 share_rules.json 으로 가린 것만. 가릴 수 없으면 보내지 않는다.
+- 주인 이메일을 코드·규칙에 평문으로 쓰지 않는다.

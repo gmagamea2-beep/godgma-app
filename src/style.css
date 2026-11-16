@@ -335,3 +335,18 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 @media (max-width: 899px) {
   .shell.with-rail > .main { padding-left: 12px; padding-right: 12px; }
 }
+
+/* ---------- 계정 · AI ---------- */
+.card h2 small, .view-title small { font-size: .75em; color: var(--muted); font-weight: 500; margin-left: 6px; }
+.btn .icon { width: 18px; height: 18px; vertical-align: -3px; margin-right: 4px; }
+.user-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.user-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.user-list li span { display: flex; flex-direction: column; min-width: 0; }
+.user-list li small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-list select { flex: none; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+.role-tag { flex: none; font-style: normal; font-size: .85rem; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.seg { display: flex; gap: 6px; margin: 0 0 12px; }
+.seg-btn { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font: inherit; cursor: pointer; }
+.seg-btn.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+#ai-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; line-height: 1.6; resize: vertical; margin-bottom: 10px; }
+.ai-answer { margin-top: 12px; }

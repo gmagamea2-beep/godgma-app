@@ -6,6 +6,8 @@ import { buildModel, plainText } from './model.js';
 import { buildSearchIndex, collectTodos, search } from './search.js';
 import { DEFAULTS, FONT_SCALES, loadSettings, saveSettings, sourceKey } from './settings.js';
 import { SyncError, sync } from './sync.js';
+import { ROLES, accountsEnabled, atLeast, listUsers, readSecrets, setRole, signIn, signOut, watchAccount, writeSecrets } from './account.js';
+import { DEFAULT_MODEL, MODELS, MODES, askGemini, buildContext } from './ai.js';
 
 const isSite = () => state.settings.source === 'public' || state.settings.source === 'full';
 
@@ -29,7 +31,16 @@ const state = {
   lastError: '',
   searchQuery: '',
   codeError: '',
+  // 계정 (Firebase). enabled 가 false 면 계정 기능을 숨긴다.
+  account: { enabled: accountsEnabled(), ready: false, user: null, profile: null, error: '' },
+  secrets: null, // 작가 이상만: { geminiKey, geminiModel, shareCode }
+  users: null, // 주인만: 가입한 사람 목록
+  ai: { mode: 'ask', question: '', answer: '', busy: false, error: '' },
 };
+
+const role = () => (state.account.user && state.account.profile?.role) || '';
+const canWrite = () => atLeast(role(), 'writer');
+const isOwner = () => role() === 'owner';
 
 // ---------- 공통 유틸 ----------
 
@@ -75,6 +86,8 @@ const ICONS = {
   prev: '<path d="M15 6l-6 6 6 6"/>',
   next: '<path d="M9 6l6 6-6 6"/>',
   unlock: '<path d="M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 6.8-1.2"/>',
+  ai: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3ZM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/>',
+  user: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0"/>',
 };
 const icon = (name) =>
   `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.page}</svg>`;
@@ -110,7 +123,7 @@ function updateSettings(patch) {
 function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   const [kind] = parts;
-  if (kind === 'todo' || kind === 'search' || kind === 'more' || kind === 'unlock') return { kind };
+  if (kind === 'todo' || kind === 'search' || kind === 'more' || kind === 'unlock' || kind === 'ai') return { kind };
   const tabs = state.model.tabs;
   const tab = (kind === 't' && tabs.find((t) => t.id === parts[1])) || tabs[0];
   if (!tab) return { kind: 'empty' };
@@ -191,6 +204,7 @@ function mainNavItems(route) {
     icon: ICONS[t.id] ? t.id : 'page',
     active: route.kind === 'tab' && route.tab === t,
   }));
+  if (canWrite()) items.push({ href: '#/ai', label: 'AI', icon: 'ai', active: route.kind === 'ai' });
   items.push({ href: '#/todo', label: '정할 것', icon: 'todo', active: route.kind === 'todo', badge: state.todos.length });
   items.push({ href: '#/more', label: '더보기', icon: 'more', active: route.kind === 'more' });
   return items;
@@ -393,6 +407,7 @@ function moreView() {
   const opt = (value, current, label) => `<option value="${value}" ${String(value) === String(current) ? 'selected' : ''}>${label}</option>`;
   return `
   <h1 class="view-title">더보기</h1>
+${accountCard()}
 
   <section class="card">
     <h2>동기화</h2>
@@ -462,6 +477,279 @@ function moreView() {
   </section>`;
 }
 
+// ---------- 계정 ----------
+
+function accountCard() {
+  const a = state.account;
+  if (!a.enabled) return '';
+  if (!a.ready) return `<section class="card"><h2>계정</h2><p class="hint">계정 확인 중…</p></section>`;
+  if (!a.user) {
+    return `<section class="card">
+      <h2>계정</h2>
+      <p class="hint">구글 계정으로 가입하면 <b>독자</b>가 됩니다. 작가는 주인이 지정합니다.</p>
+      ${a.error ? `<p class="error">${esc(a.error)}</p>` : ''}
+      <button class="btn primary" id="sign-in">${icon('user')} 구글 계정으로 로그인 · 가입</button>
+    </section>`;
+  }
+  const r = role();
+  return `<section class="card">
+    <h2>계정</h2>
+    <dl class="kv-list">
+      <dt>이름</dt><dd>${esc(a.user.displayName || '-')}</dd>
+      <dt>이메일</dt><dd>${esc(a.user.email || '-')}</dd>
+      <dt>역할</dt><dd><b>${esc(ROLES[r] || '확인 안 됨')}</b></dd>
+    </dl>
+    ${a.error ? `<p class="error">${esc(a.error)}</p>` : ''}
+    <p class="hint">${
+      r === 'reader' ? '독자는 이름을 가린 공개본을 봅니다.' : r ? '작가는 실명본을 보고 AI 를 쓸 수 있습니다. AI 에는 이름을 가린 내용만 보냅니다.' : ''
+    }</p>
+    <button class="btn" id="sign-out">로그아웃</button>
+  </section>
+  ${isOwner() ? ownerCards() : ''}`;
+}
+
+function ownerCards() {
+  const sec = state.secrets || {};
+  const users = state.users;
+  const opt = (value, current, label) => `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`;
+  const userRows = !users
+    ? '<p class="hint">불러오는 중…</p>'
+    : `<ul class="user-list">${users
+        .map(
+          (u) => `<li><span><b>${esc(u.name || '(이름 없음)')}</b><small>${esc(u.email || '')}</small></span>${
+            u.role === 'owner'
+              ? `<em class="role-tag">${ROLES.owner}</em>`
+              : `<select data-uid="${esc(u.uid)}" class="role-select" aria-label="역할">${opt('reader', u.role, ROLES.reader)}${opt('writer', u.role, ROLES.writer)}</select>`
+          }</li>`,
+        )
+        .join('')}</ul>`;
+  return `<section class="card">
+    <h2>사람 관리 <small>주인</small></h2>
+    <p class="hint">가입한 사람은 모두 독자로 시작합니다. 작가로 바꾸면 실명본과 AI 를 쓸 수 있고, Gemini 키도 읽을 수 있으니 믿는 사람만 작가로 지정하세요.</p>
+    ${userRows}
+    <button class="btn" id="reload-users">새로고침</button>
+  </section>
+  <section class="card">
+    <h2>AI · 실명 설정 <small>주인</small></h2>
+    <form id="secrets-form" autocomplete="off">
+      <label class="field">Gemini API 키
+        <input name="geminiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${sec.geminiKey ? '저장됨 — 바꾸려면 새로 입력' : 'Google AI Studio 에서 만든 키'}">
+      </label>
+      <label class="field">모델
+        <select name="geminiModel">${MODELS.map((m) => opt(m.id, sec.geminiModel || DEFAULT_MODEL, m.label)).join('')}</select>
+      </label>
+      <label class="field">실명 보기 코드 (작가에게 실명본을 자동으로 열어 줌)
+        <input name="shareCode" type="password" autocomplete="off" spellcheck="false" placeholder="${sec.shareCode ? '저장됨 — 바꾸려면 새로 입력' : 'GitHub Secrets 의 SHARE_CODE 와 같은 값'}">
+      </label>
+      <div class="row">
+        <button class="btn primary" type="submit">저장</button>
+        <button class="btn" type="button" id="clear-gemini" ${sec.geminiKey ? '' : 'disabled'}>키 지우기</button>
+      </div>
+    </form>
+    <p class="hint">키와 코드는 Firebase 에 저장되고 작가·주인만 읽을 수 있습니다. 앱 코드나 저장소에는 들어가지 않습니다.</p>
+  </section>`;
+}
+
+function aiView() {
+  if (!state.account.enabled || !canWrite()) {
+    return `<h1 class="view-title">AI</h1><p class="empty">작가만 쓸 수 있습니다. 더보기 → 계정에서 로그인하세요.</p>`;
+  }
+  const ai = state.ai;
+  const hasKey = Boolean(state.secrets?.geminiKey);
+  return `<h1 class="view-title">AI <small>${esc(MODELS.find((m) => m.id === (state.secrets?.geminiModel || DEFAULT_MODEL))?.label || '')}</small></h1>
+  ${hasKey ? '' : `<p class="error">Gemini 키가 아직 없습니다. ${isOwner() ? '더보기 → AI · 실명 설정에서 넣으세요.' : '주인에게 설정을 부탁하세요.'}</p>`}
+  <div class="seg" role="tablist">${Object.entries(MODES)
+    .map(([k, m]) => `<button class="seg-btn ${ai.mode === k ? 'on' : ''}" data-mode="${k}" role="tab" aria-selected="${ai.mode === k}">${esc(m.label)}</button>`)
+    .join('')}</div>
+  <form id="ai-form" class="card">
+    <textarea id="ai-q" rows="${ai.mode === 'write' ? 8 : 3}" placeholder="${esc(MODES[ai.mode].placeholder)}">${esc(ai.question)}</textarea>
+    <div class="row">
+      <button class="btn primary" type="submit" ${ai.busy || !hasKey ? 'disabled' : ''}>${ai.busy ? '생각하는 중…' : '보내기'}</button>
+      ${ai.answer ? '<button class="btn" type="button" id="ai-copy">답 복사</button>' : ''}
+    </div>
+    <p class="hint">설정집에서 관련 있는 부분을 골라 이름을 가린 채 함께 보냅니다. 이름은 ███ 로 나옵니다.</p>
+  </form>
+  ${ai.error ? `<p class="error">${esc(ai.error)}</p>` : ''}
+  ${ai.answer ? `<article class="page ai-answer"><div class="md">${renderMarkdown(ai.answer)}</div></article>` : ''}`;
+}
+
+/** AI 에 보낼 모델: 언제나 이름을 가린 상태 */
+function maskedModel() {
+  if (state.settings.source === 'public') return state.model.shareActive ? state.model : buildModel(state.snapshot, { shareMode: false });
+  const m = buildModel(state.snapshot, { shareMode: true });
+  if (!m.shareActive) throw new Error('share_rules.json 이 없어 이름을 가릴 수 없습니다. AI 에 보내지 않았습니다.');
+  if (m.shareLeftovers.length) throw new Error('가려지지 않은 이름이 남아 있어 AI 에 보내지 않았습니다. share_rules.json 을 확인하세요.');
+  return m;
+}
+
+async function runAi(e) {
+  e.preventDefault();
+  const ai = state.ai;
+  ai.question = document.getElementById('ai-q')?.value.trim() || '';
+  if (!ai.question || ai.busy) return;
+  if (!state.snapshot) {
+    ai.error = '먼저 설정집을 동기화하세요.';
+    render({ keepScroll: true });
+    return;
+  }
+  ai.busy = true;
+  ai.error = '';
+  render({ keepScroll: true });
+  try {
+    const context = buildContext(maskedModel(), ai.question);
+    ai.answer = await askGemini({
+      key: state.secrets?.geminiKey,
+      model: state.secrets?.geminiModel || DEFAULT_MODEL,
+      mode: ai.mode,
+      question: ai.question,
+      context,
+    });
+  } catch (err) {
+    ai.error = err.message;
+  } finally {
+    ai.busy = false;
+    if (parseRoute().kind === 'ai') render({ keepScroll: true });
+  }
+}
+
+function bindAccount(route) {
+  document.getElementById('sign-in')?.addEventListener('click', async () => {
+    try {
+      await signIn();
+    } catch (err) {
+      state.account.error = `로그인하지 못했습니다: ${err.code || err.message}`;
+      render({ keepScroll: true });
+    }
+  });
+  document.getElementById('sign-out')?.addEventListener('click', () => signOut().catch((err) => toast(err.message)));
+  document.getElementById('reload-users')?.addEventListener('click', loadUsers);
+  document.querySelectorAll('.role-select').forEach((sel) =>
+    sel.addEventListener('change', async (e) => {
+      const r = e.target.value;
+      try {
+        await setRole(e.target.dataset.uid, r);
+        toast(`${ROLES[r]}(으)로 바꿨습니다.`);
+        await loadUsers();
+      } catch (err) {
+        toast(`바꾸지 못했습니다: ${err.message}`);
+        await loadUsers();
+      }
+    }),
+  );
+  document.getElementById('secrets-form')?.addEventListener('submit', saveSecretsForm);
+  document.getElementById('clear-gemini')?.addEventListener('click', async () => {
+    if (!confirm('Gemini 키를 지울까요?')) return;
+    try {
+      await writeSecrets({ geminiKey: '' });
+      state.secrets = { ...state.secrets, geminiKey: '' };
+      toast('키를 지웠습니다.');
+      render({ keepScroll: true });
+    } catch (err) {
+      toast(`지우지 못했습니다: ${err.message}`);
+    }
+  });
+  if (route.kind === 'ai') {
+    document.getElementById('ai-form')?.addEventListener('submit', runAi);
+    document.getElementById('ai-q')?.addEventListener('input', (e) => (state.ai.question = e.target.value));
+    document.querySelectorAll('.seg-btn').forEach((b) =>
+      b.addEventListener('click', () => {
+        state.ai.mode = b.dataset.mode;
+        render({ keepScroll: true });
+      }),
+    );
+    document.getElementById('ai-copy')?.addEventListener('click', () =>
+      navigator.clipboard?.writeText(state.ai.answer).then(() => toast('복사했습니다.'), () => toast('복사하지 못했습니다.')),
+    );
+  }
+}
+
+async function saveSecretsForm(e) {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const patch = { geminiModel: String(f.get('geminiModel') || DEFAULT_MODEL) };
+  const key = String(f.get('geminiKey') || '').trim();
+  const code = String(f.get('shareCode') || '').trim();
+  if (key) {
+    if (/\s/.test(key)) return toast('키에 공백이 들어 있습니다.');
+    patch.geminiKey = key;
+  }
+  if (code) patch.shareCode = code;
+  try {
+    await writeSecrets(patch);
+    state.secrets = { ...state.secrets, ...patch };
+    toast('저장했습니다.');
+    render({ keepScroll: true });
+    if (code) autoUnlock();
+  } catch (err) {
+    toast(`저장하지 못했습니다: ${err.message}`);
+  }
+}
+
+async function loadUsers() {
+  try {
+    state.users = await listUsers();
+  } catch (err) {
+    state.account.error = `사람 목록을 읽지 못했습니다: ${err.message}`;
+  }
+  if (parseRoute().kind === 'more') render({ keepScroll: true });
+}
+
+/** 작가가 로그인하면 실명 보기 코드로 실명본을 자동으로 연다 (사이트에서 공개본을 보고 있을 때만) */
+async function autoUnlock() {
+  const code = state.secrets?.shareCode;
+  if (!code || state.settings.source !== 'public') return;
+  try {
+    const { snapshot } = await sync({ ...state.settings, source: 'full', shareCode: code }, null);
+    updateSettings({ source: 'full', shareCode: code, shareMode: false, autoFull: true });
+    state.snapshot = snapshot;
+    state.lastError = '';
+    try {
+      await saveSnapshot(snapshot);
+    } catch (err) {
+      console.warn('[account] 기기에 저장하지 못했다', err);
+    }
+    rebuild();
+    render({ keepScroll: true });
+    toast('작가 계정: 실명본을 열었습니다.');
+  } catch (err) {
+    console.warn('[account] 실명본을 열지 못했다', err);
+    toast('실명 보기 코드가 맞지 않아 실명본을 열지 못했습니다.');
+  }
+}
+
+async function onAccount({ user, profile, error }) {
+  const a = state.account;
+  a.ready = true;
+  a.user = user;
+  a.profile = profile;
+  a.error = error ? `계정 정보를 읽지 못했습니다: ${error}` : '';
+  state.secrets = null;
+  state.users = null;
+  if (canWrite()) {
+    try {
+      state.secrets = await readSecrets();
+    } catch (err) {
+      a.error = `설정을 읽지 못했습니다: ${err.message}`;
+    }
+    autoUnlock();
+  } else if (state.settings.autoFull && state.settings.source === 'full') {
+    // 로그아웃했거나 독자가 되면, 자동으로 열었던 실명본을 닫는다
+    await switchSource({ source: 'public', shareCode: '', autoFull: false });
+  }
+  if (isOwner()) loadUsers();
+  if (parseRoute().kind === 'ai' && !canWrite()) location.hash = '#/';
+  render({ keepScroll: true });
+}
+
+function startAccount() {
+  if (!state.account.enabled) return;
+  watchAccount(onAccount).catch((err) => {
+    state.account.ready = true;
+    state.account.error = `계정 기능을 시작하지 못했습니다: ${err.message}`;
+    render({ keepScroll: true });
+  });
+}
+
 // ---------- 렌더링 ----------
 
 function render({ keepScroll = false } = {}) {
@@ -480,6 +768,9 @@ function render({ keepScroll = false } = {}) {
       break;
     case 'unlock':
       main = unlockView();
+      break;
+    case 'ai':
+      main = aiView();
       break;
     case 'tab':
       main = tabView(route);
@@ -582,7 +873,7 @@ let searchTimer = 0;
 
 function bindView(route) {
   document.getElementById('code-form')?.addEventListener('submit', openWithCode);
-  document.getElementById('lock-again')?.addEventListener('click', () => switchSource({ source: 'public', shareCode: '' }));
+  document.getElementById('lock-again')?.addEventListener('click', () => switchSource({ source: 'public', shareCode: '', autoFull: false }));
   document.getElementById('use-site')?.addEventListener('click', () => switchSource({ source: 'public', shareCode: '' }));
   document.getElementById('use-github')?.addEventListener('click', () => switchSource({ source: 'github', shareCode: '' }, '#/more'));
   if (route.kind !== 'more') document.getElementById('sync-now')?.addEventListener('click', () => doSync({ manual: true }));
@@ -602,6 +893,7 @@ function bindView(route) {
     });
   }
 
+  bindAccount(route);
   if (route.kind === 'more') {
     document.getElementById('sync-now')?.addEventListener('click', () => doSync({ manual: true }));
     document.getElementById('theme')?.addEventListener('change', (e) => {
@@ -635,7 +927,7 @@ async function openWithCode(e) {
   try {
     const trial = { ...state.settings, source: 'full', shareCode: code };
     const { snapshot } = await sync(trial, null);
-    updateSettings({ source: 'full', shareCode: code, shareMode: false });
+    updateSettings({ source: 'full', shareCode: code, shareMode: false, autoFull: false });
     state.codeError = '';
     state.snapshot = snapshot;
     state.lastError = '';
@@ -813,6 +1105,7 @@ async function start() {
   window.addEventListener('online', maybeAutoSync);
   // 앱을 열 때는 최신 커밋을 항상 확인한다 (바뀌지 않았으면 sha 하나만 받는다).
   if (navigator.onLine && canSync()) doSync();
+  startAccount();
 
   if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     import('virtual:pwa-register')

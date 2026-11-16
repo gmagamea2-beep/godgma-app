@@ -48,7 +48,10 @@ jobs:
         run: |
           node tools/build_bundles.mjs _data
           rm -rf _data
+      # 계정 기능(Firebase). 저장소 Variables 의 FIREBASE_CONFIG(JSON)가 없으면 계정 기능 없이 빌드된다.
       - run: npm run build
+        env:
+          VITE_FIREBASE_CONFIG: ${{ vars.FIREBASE_CONFIG }}
       # 실명이 빌드 결과물에 섞이면 배포를 멈춘다 (가릴 이름은 비공개 데이터 저장소에만 있어야 한다)
       - name: Check no data in dist
         run: |
