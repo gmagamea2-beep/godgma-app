@@ -58,7 +58,8 @@ await writeFile(join(root, 'public/share.json'), JSON.stringify({ v: 1, id: shor
 console.log(`share.json: 파일 ${Object.keys(shareFiles).length}개`);
 
 // ---------- 실명본 ----------
-const code = process.env.SHARE_CODE;
+// 앞뒤 공백(시크릿에 딸려 들어간 줄바꿈 등)을 떼고, 한글 등은 NFC 로 맞춘다. 앱도 같은 방식으로 맞춘다.
+const code = (process.env.SHARE_CODE || '').trim().normalize('NFC');
 if (!code) {
   console.warn('SHARE_CODE 가 없어 full.enc.json 은 건너뛴다 (기존 파일 유지).');
 } else {

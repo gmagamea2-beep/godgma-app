@@ -130,21 +130,26 @@ const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 export async function decryptBundle(bundle, code) {
   if (bundle?.v !== 1 || bundle.kdf !== 'PBKDF2-SHA256') throw new SyncError('실명본 형식을 알 수 없습니다.');
-  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveKey']);
-  const key = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: b64(bundle.salt), iterations: bundle.iterations },
-    base,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['decrypt'],
-  );
-  let plain;
-  try {
-    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(bundle.iv) }, key, b64(bundle.data));
-  } catch {
-    throw new SyncError('코드가 맞지 않습니다.', { status: 401 });
+  // 빌드는 앞뒤 공백을 떼고 NFC 로 맞춘 코드로 암호화한다. 예전 빌드(공백 · 정규화 없음)와도 맞도록 원래 값도 시도한다.
+  const raw = String(code ?? '');
+  const tries = [...new Set([raw.trim().normalize('NFC'), raw.trim(), raw])].filter(Boolean);
+  for (const c of tries) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(c), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', hash: 'SHA-256', salt: b64(bundle.salt), iterations: bundle.iterations },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt'],
+    );
+    try {
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(bundle.iv) }, key, b64(bundle.data));
+      return JSON.parse(new TextDecoder().decode(plain));
+    } catch {
+      /* 다음 후보 */
+    }
   }
-  return JSON.parse(new TextDecoder().decode(plain));
+  throw new SyncError('코드가 맞지 않습니다. GitHub Secrets 의 SHARE_CODE 와 같은지 확인하세요. 코드를 바꿨다면 배포를 한 번 다시 돌려야 합니다.', { status: 401 });
 }
 
 async function syncSite(settings, prev, now) {
